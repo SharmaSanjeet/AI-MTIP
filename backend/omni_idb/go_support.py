@@ -248,7 +248,7 @@ def download_latest_goresym(
     try:
         api_url = "https://api.github.com/repos/mandiant/GoReSym/releases/latest"
         log("[*] Querying GitHub API for latest release...")
-        req = urllib.request.Request(api_url, headers={"User-Agent": "MANTIS-BinaryLab"})
+        req = urllib.request.Request(api_url, headers={"User-Agent": "AI-MTIP-BinaryLab"})
         with urllib.request.urlopen(req, timeout=15) as resp:
             data = json.loads(resp.read().decode("utf-8"))
 
@@ -264,7 +264,7 @@ def download_latest_goresym(
             return False, f"Could not find asset {target_asset} in release {tag}"
 
         log(f"[*] Downloading {target_asset}...")
-        dl_req = urllib.request.Request(download_url, headers={"User-Agent": "MANTIS-BinaryLab"})
+        dl_req = urllib.request.Request(download_url, headers={"User-Agent": "AI-MTIP-BinaryLab"})
         with urllib.request.urlopen(dl_req, timeout=45) as dl_resp:
             chunks = []
             while True:

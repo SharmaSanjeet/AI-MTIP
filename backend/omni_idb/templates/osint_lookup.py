@@ -16,7 +16,7 @@ import urllib.parse
 import urllib.request
 from typing import Any, Dict, List, Optional
 
-USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) MANTIS-Agent/1.0"
+USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AI-MTIP-Agent/1.0"
 
 
 def _fetch_json(url: str, timeout: int = 8) -> Optional[Any]:
@@ -130,7 +130,7 @@ def lookup_github(query: str) -> Dict[str, Any]:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="MANTIS OSINT & Internet Threat Intelligence Lookup Tool")
+    parser = argparse.ArgumentParser(description="AI-MTIP OSINT & Internet Threat Intelligence Lookup Tool")
     parser.add_argument("--hash", help="Query a file hash (SHA256, MD5) on open databases")
     parser.add_argument("--domain", help="Query domain RDAP, registration, and OTX")
     parser.add_argument("--ip", help="Query IP RDAP, ASN, and OTX")

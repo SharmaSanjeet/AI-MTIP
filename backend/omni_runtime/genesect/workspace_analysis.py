@@ -205,7 +205,7 @@ def _analysis_prompt(workspace: Path) -> str:
         "syntactically valid, production-ready YARA rule (fenced with ```yara ... ```) tailored to this sample and its threat family.\n"
         "Requirements:\n"
         "1. Rule Name: Format as `rule mal_<platform>_<family_or_sample>_<capability>`.\n"
-        "2. Metadata: Include `author = \"MANTIS Binary Lab\"`, `date`, `sample_sha256`, `description`, `threat_level = \"critical\"`, `reference`.\n"
+        "2. Metadata: Include `author = \"AI-MTIP Binary Lab\"`, `date`, `sample_sha256`, `description`, `threat_level = \"critical\"`, `reference`.\n"
         "3. Strings Block: Define distinctive strings ($str*), unique API sequences, C2 patterns, or distinctive hex opcode sequences ($code*).\n"
         "4. Condition Block: Strictly enforce target binary headers (PE/ELF), filesize constraints, and string combination logic.\n"
         "5. Zero False Positives: Never match compiler boilerplate, CRT runtime code, or generic API names alone."

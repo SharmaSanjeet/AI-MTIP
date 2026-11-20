@@ -72,7 +72,7 @@ def _analysis_prompt(workspace: Path) -> str:
         "syntactically valid, production-ready YARA rule (fenced with ```yara ... ```) tailored to this sample and its threat family.\n"
         "Requirements:\n"
         "1. Rule Name: Format as `rule mal_<platform>_<family_or_sample>_<capability>` (e.g. `rule mal_win_downloader_beacon`).\n"
-        "2. Metadata: Include `author = \"MANTIS Binary Lab\"`, `date`, `sample_sha256`, `description`, `threat_level = \"critical\"`, `reference`.\n"
+        "2. Metadata: Include `author = \"AI-MTIP Binary Lab\"`, `date`, `sample_sha256`, `description`, `threat_level = \"critical\"`, `reference`.\n"
         "3. Strings Block: Define distinctive strings ($str*), unique API sequences, C2 URI/command patterns, or distinctive hex opcode sequences ($code*).\n"
         "4. Condition Block: Strictly enforce target binary header checks (e.g. `uint16(0) == 0x5A4D and uint32(uint32(0x3C)) == 0x00004550` for PE, or `uint32(0) == 0x464C457F` for ELF), filesize constraints, and string combination logic.\n"
         "5. Zero False Positives: Never match compiler prologues, CRT runtime boilerplate, or generic API names alone."
@@ -589,7 +589,7 @@ def _extract_or_generate_yara(report: str, workspace: Path, sample_info: dict) -
         synth_rule = f"""rule mal_bin_{safe_name} {{
     meta:
         description = "Automated binary signature for {sample_dict.get('filename', 'sample')}"
-        author = "MANTIS Binary Lab"
+        author = "AI-MTIP Binary Lab"
         date = "{time.strftime('%Y-%m-%d')}"
         sample_sha256 = "{sha}"
         threat_level = "high"

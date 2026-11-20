@@ -2,7 +2,7 @@
 
 Extracts hashes, network IOCs, registry keys, mutexes, and unique strings from
 an exported AI workspace, queries local CTI articles, reputation feeds, MISP galaxies,
-and MANTIS case intelligence, and produces a structured threat attribution assessment
+and AI-MTIP case intelligence, and produces a structured threat attribution assessment
 (threat_attribution_result.md) based on the Evidence-Based 6-Category Threat Attribution Model.
 """
 
@@ -723,7 +723,7 @@ def query_all_threat_intelligence(
     data_dir: Optional[Path] = None,
     log_fn: Optional[Callable[[str], None]] = None,
 ) -> Dict[str, Any]:
-    """Execute unified lookups across all MANTIS intelligence sources."""
+    """Execute unified lookups across all AI-MTIP intelligence sources."""
     data_dir = data_dir or _find_data_dir()
     iq = _get_intel_query()
     sample_info = sample_info or {}
@@ -1093,7 +1093,7 @@ def query_all_threat_intelligence(
                 except Exception:
                     continue
 
-    # Fill default coverage indicators for standard MANTIS catalog
+    # Fill default coverage indicators for standard AI-MTIP catalog
     standard_sources = [
         ("VirusTotal", "Commercial Sandbox & Multi-AV"),
         ("ThreatFox", "Abuse.ch Malware IOC Tracking"),
@@ -1104,14 +1104,14 @@ def query_all_threat_intelligence(
         ("Hybrid Analysis", "CrowdStrike Falcon Sandbox Telemetry"),
         ("Kaspersky TIP", "Kaspersky Threat Intelligence Portal"),
         ("Community Passive DNS", "Passive DNS & Domain Intelligence"),
-        ("Local Yara Rules", "MANTIS Local YARA Signature Repository"),
+        ("Local Yara Rules", "AI-MTIP Local YARA Signature Repository"),
         ("MISP Galaxy", "Open-Source Threat Actor & Malware Clusters"),
-        ("Threat Actor Knowledge", "MANTIS Threat Actor Identity Catalog"),
+        ("Threat Actor Knowledge", "AI-MTIP Threat Actor Identity Catalog"),
         ("ThreatActorUsernames", "Underground Forum & Persona Profiles"),
         ("TweetFeed", "Real-Time Infosec Researcher Alerts"),
         ("Malware.News", "Curated Threat Research & DFIR Articles"),
-        ("Local RSS", "MANTIS Ingested Security Newsfeeds"),
-        ("CTI Articles", "MANTIS FTS5 Technical Analysis Writeups"),
+        ("Local RSS", "AI-MTIP Ingested Security Newsfeeds"),
+        ("CTI Articles", "AI-MTIP FTS5 Technical Analysis Writeups"),
         ("ORKL CTI", "10,000+ Public Threat Intelligence Reports"),
         ("URLhaus", "Abuse.ch Malicious URL Distribution Tracker"),
         ("PhishStats", "Phishing URL & Domain Telemetry"),
@@ -1473,11 +1473,11 @@ def render_threat_attribution_markdown(
     else:
         lines.append("*No shell commands, credential harvesting targets, or extortion keywords identified.*\n")
 
-    # 2. Multi-Source Threat Intelligence & Correlation (MANTIS Unified Lookups)
+    # 2. Multi-Source Threat Intelligence & Correlation (AI-MTIP Unified Lookups)
     lines.extend([
         "---",
         "",
-        "## 2. Multi-Source Threat Intelligence & Correlation (MANTIS Lookups)",
+        "## 2. Multi-Source Threat Intelligence & Correlation (AI-MTIP Lookups)",
         "",
         f"Cross-correlated sample indicators against **{len(sources_coverage)} unified threat intelligence sources** across local databases, sandbox telemetry, Abuse.ch trackers, OSINT repositories, and passive DNS infrastructure.",
         "",
@@ -1559,7 +1559,7 @@ def render_threat_attribution_markdown(
         lines.append("| :--- | :--- | :--- | :--- |")
         for y in yara_matches[:8]:
             r_name = y.get("rule") or y.get("name") or "Rule"
-            r_author = y.get("author") or "MANTIS / YARAify"
+            r_author = y.get("author") or "AI-MTIP / YARAify"
             r_tags = ", ".join(y.get("tags") or []) or "General"
             r_desc = y.get("description") or "Matched signature"
             lines.append(f"| `{r_name}` | {r_author} | {r_tags} | {r_desc[:80]} |")
@@ -1571,7 +1571,7 @@ def render_threat_attribution_markdown(
     lines.append("| :--- | :--- | :--- |")
     for s_name, s_status in sorted(sources_coverage.items()):
         badge = "🟢" if "hit" in s_status.lower() or "report" in s_status.lower() or "sample" in s_status.lower() or "tweet" in s_status.lower() or "rule" in s_status.lower() or "cluster" in s_status.lower() else "⚪"
-        lines.append(f"| **{s_name}** | MANTIS Unified Engine | {badge} {s_status} |")
+        lines.append(f"| **{s_name}** | AI-MTIP Unified Engine | {badge} {s_status} |")
     lines.append("")
 
     # 2.8 Autonomous Pivoting & Relationship Mapping (Discover & Pivot)
@@ -1664,7 +1664,7 @@ def render_threat_attribution_markdown(
         "Review threat_attribution_result.md, perform active live internet searches for unknown IOCs, and apply skills/threat_attribution/SKILL.md to verify findings in modules/ and catalogs.",
         "```",
         "",
-        f"*Report generated automatically by MANTIS Binary Lab Threat Attribution Engine at {indicators.get('sample_meta', {}).get('timestamp', 'analysis time')}.*",
+        f"*Report generated automatically by AI-MTIP Binary Lab Threat Attribution Engine at {indicators.get('sample_meta', {}).get('timestamp', 'analysis time')}.*",
     ])
 
     return "\n".join(lines)

@@ -325,4 +325,4 @@ Runtime data (databases, synced YARA rules, feed caches, reports) is written und
 
 Released under the [MIT License](LICENSE).
 
-AI-MTIP originated as a fork-style rewrite of the excellent open-source [MANTIS](https://github.com/fareedfauzi/MANTIS) project by fareedfauzi (MIT) — rebranded, refactored, and extended by Sanjeet Sharma. The original MIT copyright notice is retained in [LICENSE](LICENSE).
+Built and maintained by **Sanjeet Sharma · CISSP** — connect with me on [LinkedIn](https://www.linkedin.com/in/sanjeet-sharma-cissp-17b68570/).

@@ -1,10 +1,10 @@
-# Ghidra Headless Python Script for MANTIS Binary Lab
+# Ghidra Headless Python Script for AI-MTIP Binary Lab
 #
 # Automatically decompiles functions, extracts symbols, imports, exports,
 # strings, and metadata, and exports an AI workspace compatible with
-# MANTIS Binary Analysis Lab.
+# AI-MTIP Binary Analysis Lab.
 #
-# @category MANTIS
+# @category AI-MTIP
 
 from __future__ import annotations
 

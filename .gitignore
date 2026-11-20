@@ -119,7 +119,7 @@ website/dist/
 release-work/
 .vscode/
 vibe_images/
-.upstream-mantis/
+.upstream/
 capture*.js
 .idea/
 .codex-logs/

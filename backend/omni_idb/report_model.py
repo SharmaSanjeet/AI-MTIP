@@ -471,7 +471,7 @@ def yara_rule(model: Dict[str, Any]) -> str:
     name = re.sub(r"[^A-Za-z0-9_]", "_", str(sample.get("filename", "sample"))).strip("_") or "sample"
     meta = [
         '        description = "Indicators observed in %s"' % str(sample.get("filename", "sample")).replace('"', "'"),
-        '        author = "MANTIS Binary Lab automated analysis"',
+        '        author = "AI-MTIP Binary Lab automated analysis"',
         '        date = "%s"' % str(model.get("generated_at", ""))[:10],
     ]
     if sample.get("sha256"):

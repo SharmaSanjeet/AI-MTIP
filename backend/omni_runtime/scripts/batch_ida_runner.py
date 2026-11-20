@@ -319,7 +319,7 @@ def query_openai_compatible(url, key, model, prompt, sys_prompt, max_tokens=None
 
     hdrs = {
         "Content-Type": "application/json",
-        "User-Agent": "MANTIS-BinaryLab/1.0",
+        "User-Agent": "AI-MTIP-BinaryLab/1.0",
     }
     if key:
         hdrs["Authorization"] = "Bearer " + str(key).strip()
@@ -439,7 +439,7 @@ def query_anthropic(url, key, model, prompt, sys_prompt, max_tokens=None, timeou
         "Content-Type": "application/json",
         "x-api-key": str(key).strip(),
         "anthropic-version": "2023-06-01",
-        "User-Agent": "MANTIS-BinaryLab/1.0",
+        "User-Agent": "AI-MTIP-BinaryLab/1.0",
     }
     payload = {
         "model": str(model or "claude-sonnet-4-6"),

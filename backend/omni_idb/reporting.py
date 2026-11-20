@@ -858,7 +858,7 @@ def render_html(markdown: str, model: Dict[str, Any]) -> str:
 <body><div class="layout"><nav>
   <div class="brand">
     <div class="brand-icon">M</div>
-    <div class="brand-text">MANTIS Binary Lab</div>
+    <div class="brand-text">AI-MTIP Binary Lab</div>
   </div>
   <h2>CONTENTS</h2><ul>%s</ul></nav>
 <main>
@@ -935,11 +935,11 @@ def _render_pdf_reportlab(blocks: List[Block], model: Dict[str, Any], output: Pa
         canvas.saveState()
         canvas.setFont("Helvetica", 8)
         canvas.setFillColor(colors.HexColor("#718096"))
-        canvas.drawString(40, 22, "MANTIS Binary Lab analysis report - %s" % _pdf_text(str(sample.get("filename") or title_text)))
+        canvas.drawString(40, 22, "AI-MTIP Binary Lab analysis report - %s" % _pdf_text(str(sample.get("filename") or title_text)))
         canvas.drawRightString(letter[0] - 40, 22, "Page %d" % doc.page)
         canvas.restoreState()
 
-    story: List[Any] = [Paragraph("<b>MANTIS BINARY ANALYSIS REPORT</b>", body), Paragraph(html.escape(_pdf_text(title_text)), title),
+    story: List[Any] = [Paragraph("<b>AI-MTIP BINARY ANALYSIS REPORT</b>", body), Paragraph(html.escape(_pdf_text(title_text)), title),
                         Paragraph("<b>Classification:</b> %s" % html.escape(_pdf_text(str(model.get("category") or "Unclassified"))), body),
                         Paragraph("<b>SHA256:</b> <font face='Courier'>%s</font>" % html.escape(str(sample.get("sha256", "n/a"))), body),
                         Spacer(1, 10)]
@@ -1046,9 +1046,9 @@ def _render_pdf_builtin(blocks: List[Block], model: Dict[str, Any], output: Path
     sample = _normalize_sample(model)
     h1_candidates = [b[2] for b in blocks if b[0] == "h" and b[1] == 1]
     title_text = str(model.get("title") or sample.get("filename") or (h1_candidates[0] if h1_candidates else "sample"))
-    doc = _PdfDoc("MANTIS Binary Lab analysis report - %s" % (sample.get("filename") or title_text))
+    doc = _PdfDoc("AI-MTIP Binary Lab analysis report - %s" % (sample.get("filename") or title_text))
     navy, slate, blue = (0.1, 0.21, 0.36), (0.17, 0.2, 0.28), (0.17, 0.42, 0.69)
-    doc.line("MANTIS BINARY ANALYSIS REPORT", "F2", 9, (0.4, 0.45, 0.5))
+    doc.line("AI-MTIP BINARY ANALYSIS REPORT", "F2", 9, (0.4, 0.45, 0.5))
     doc.wrapped(title_text, "F2", 20, (0.05, 0.07, 0.11), gap=4, factor=0.55)
     doc.wrapped("Classification: %s" % (model.get("category") or "Unclassified"), "F1", 10, slate, gap=4)
     doc.wrapped("SHA256: %s" % sample.get("sha256", "n/a"), "F3", 8, slate, gap=2, factor=0.6)
