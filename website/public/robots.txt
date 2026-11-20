@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://SharmaSanjeet.github.io/AI-MTIP/sitemap-index.xml

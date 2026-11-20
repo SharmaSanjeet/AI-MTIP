@@ -1,0 +1,4466 @@
+(function () {
+
+    const API_BASE = window.location.protocol === 'file:' ? 'http://127.0.0.1:9999' : window.location.origin;
+
+    const state = {
+
+        open: false,
+
+        minimized: false,
+
+        messages: [],
+
+        settings: null,
+
+        actionId: 0,
+
+        actions: new Map(),
+
+        mode: 'assist',
+
+        agentRunId: null,
+
+        agentSessionId: 0,
+
+        agentRunning: false,
+
+        agentStopRequested: false,
+
+        chatRequestId: 0,
+
+        correlationRequestId: 0,
+
+        attributionRequestId: 0,
+
+        correlation: null,
+
+        correlationPayload: null,
+
+        attribution: null,
+
+        attributionPayload: null,
+
+        caseId: null,
+
+        caseState: null,
+
+        caseBusy: false
+
+    };
+
+
+
+    function el(tag, attrs = {}, children = []) {
+
+        const node = document.createElement(tag);
+
+        Object.entries(attrs || {}).forEach(([key, value]) => {
+
+            if (key === 'class') node.className = value;
+
+            else if (key === 'text') node.textContent = value;
+
+            else if (key === 'html') node.innerHTML = value;
+
+            else node.setAttribute(key, value);
+
+        });
+
+        (Array.isArray(children) ? children : [children]).filter(Boolean).forEach(child => {
+
+            node.appendChild(typeof child === 'string' ? document.createTextNode(child) : child);
+
+        });
+
+        return node;
+
+    }
+
+
+
+    async function fetchJson(url, options = {}) {
+
+        const timeoutMs = Number(options.timeoutMs || 45000);
+
+        const controller = new AbortController();
+
+        const timer = timeoutMs > 0 ? setTimeout(() => controller.abort(), timeoutMs) : null;
+
+        const requestOptions = { ...options, signal: options.signal || controller.signal };
+
+        delete requestOptions.timeoutMs;
+
+        try {
+
+            const res = await fetch(url, requestOptions);
+
+            const data = await res.json().catch(() => ({}));
+
+            if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+
+            return data;
+
+        } catch (e) {
+
+            if (e?.name === 'AbortError') {
+
+                throw new Error(`MTIP AI request timed out after ${Math.round(timeoutMs / 1000)} seconds.`);
+
+            }
+
+            throw e;
+
+        } finally {
+
+            if (timer) clearTimeout(timer);
+
+        }
+
+    }
+
+
+
+    function aiRequestTimeoutMs(extraSeconds = 12) {
+
+        const configured = Number(state.settings?.timeout_seconds || 30);
+
+        return Math.max(15000, Math.min((configured + extraSeconds) * 1000, 150000));
+
+    }
+
+
+
+    function notify(message) {
+
+        if (typeof window.showNotification === 'function') window.showNotification(message);
+
+    }
+
+
+
+    function aiEsc(value) {
+
+        const d = document.createElement('div');
+
+        d.textContent = value === undefined || value === null ? '' : String(value);
+
+        return d.innerHTML;
+
+    }
+
+
+
+    function compactDomContext() {
+
+        if (typeof window.mtipGetState === 'function') return window.mtipGetState();
+
+        const title = document.getElementById('current-tab-title')?.textContent || '';
+
+        const active = document.querySelector('.nav-item.active')?.dataset.tab || '';
+
+        const visible = [...document.querySelectorAll('main [id$="-pane"], #results-container, #settings-view')]
+
+            .find(x => x.offsetParent !== null);
+
+        return {
+
+            page: active,
+
+            title,
+
+            query: { value: document.getElementById('ioc-input')?.value?.trim() || '' },
+
+            visible_text: (visible?.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 6000)
+
+        };
+
+    }
+
+
+
+    function renderIntelligence(intelligence) {
+
+        if (!intelligence || typeof intelligence !== 'object') return null;
+
+        const facts = Array.isArray(intelligence.facts) ? intelligence.facts.slice(0, 4) : [];
+
+        const gaps = Array.isArray(intelligence.gaps) ? intelligence.gaps.slice(0, 3) : [];
+
+        const pivots = Array.isArray(intelligence.pivot_candidates) ? intelligence.pivot_candidates.slice(0, 3) : [];
+
+        const contradictions = Array.isArray(intelligence.contradictions) ? intelligence.contradictions.slice(0, 4) : [];
+
+        const attribution = intelligence.attribution && typeof intelligence.attribution === 'object' ? intelligence.attribution : null;
+
+        const hypotheses = attribution && Array.isArray(attribution.hypotheses) ? attribution.hypotheses.slice(0, 4) : [];
+
+        const similaritySignals = attribution && Array.isArray(attribution.similarity_signals) ? attribution.similarity_signals.slice(0, 3) : [];
+
+        const workflow = intelligence.workflow && typeof intelligence.workflow === 'object' ? intelligence.workflow : null;
+
+        const report = intelligence.report && typeof intelligence.report === 'object' ? intelligence.report : null;
+
+        const reportHasContent = !!(report && (
+
+            report.executive_summary
+
+            || report.attribution_assessment
+
+            || (Array.isArray(report.key_findings) && report.key_findings.length)
+
+            || (Array.isArray(report.caveats) && report.caveats.length)
+
+            || (Array.isArray(report.recommended_actions) && report.recommended_actions.length)
+
+        ));
+
+        const rawConfidence = intelligence.confidence && typeof intelligence.confidence === 'object' ? intelligence.confidence : null;
+
+        const confidence = rawConfidence && rawConfidence.has_evidence ? rawConfidence : null;
+
+        const memory = intelligence.memory && typeof intelligence.memory === 'object' ? intelligence.memory : null;
+
+        if (!facts.length && !gaps.length && !pivots.length && !contradictions.length && !hypotheses.length && !similaritySignals.length && !workflow && !reportHasContent && !confidence && !memory) return null;
+
+        const box = el('details', { class: 'ai-intel-box' });
+
+        box.appendChild(el('summary', { class: 'ai-intel-title', text: 'Evidence Snapshot' }));
+
+        if (confidence && (confidence.assessment || confidence.caution)) {
+
+            const section = el('div', { class: 'ai-intel-section' });
+
+            section.appendChild(el('div', { class: 'ai-intel-label', text: 'Confidence' }));
+
+            const item = el('div', { class: 'ai-intel-item' });
+
+            if (confidence.assessment) item.appendChild(el('div', { class: 'ai-intel-statement', text: confidence.assessment }));
+
+            const meta = [
+
+                confidence.source_count ? `${confidence.source_count} sources` : '',
+
+                confidence.external_claim_count ? `${confidence.external_claim_count} claims` : '',
+
+                confidence.technical_observation_count ? `${confidence.technical_observation_count} technical observations` : '',
+
+                confidence.gap_count ? `${confidence.gap_count} gaps` : ''
+
+            ].filter(Boolean).join(' | ');
+
+            if (meta) item.appendChild(el('div', { class: 'ai-intel-meta', text: meta }));
+
+            if (confidence.caution) item.appendChild(el('div', { class: 'ai-intel-meta', text: confidence.caution }));
+
+            section.appendChild(item);
+
+            box.appendChild(section);
+
+        }
+
+        if (memory && memory.updated_at) {
+
+            const section = el('div', { class: 'ai-intel-section' });
+
+            section.appendChild(el('div', { class: 'ai-intel-label', text: 'Memory' }));
+
+            section.appendChild(el('div', {
+
+                class: 'ai-intel-item',
+
+                text: `Prior structured intelligence for ${memory.artifact_type || 'artifact'}:${memory.artifact_value || ''} from ${memory.updated_at}`
+
+            }));
+
+            box.appendChild(section);
+
+        }
+
+        if (facts.length) {
+
+            const section = el('div', { class: 'ai-intel-section' });
+
+            section.appendChild(el('div', { class: 'ai-intel-label', text: 'Facts' }));
+
+            facts.forEach(fact => {
+
+                const item = el('div', { class: 'ai-intel-item' });
+
+                item.appendChild(el('div', { class: 'ai-intel-statement', text: fact.statement || fact.value || '' }));
+
+                const meta = [
+
+                    fact.kind || '',
+
+                    fact.category || '',
+
+                    Array.isArray(fact.sources) ? fact.sources.join(', ') : ''
+
+                ].filter(Boolean).join(' | ');
+
+                if (meta) item.appendChild(el('div', { class: 'ai-intel-meta', text: meta }));
+
+                section.appendChild(item);
+
+            });
+
+            box.appendChild(section);
+
+        }
+
+        if (gaps.length) {
+
+            const section = el('div', { class: 'ai-intel-section' });
+
+            section.appendChild(el('div', { class: 'ai-intel-label', text: 'Source Health' }));
+
+            gaps.forEach(gap => {
+
+                section.appendChild(el('div', {
+
+                    class: 'ai-intel-item ai-intel-gap',
+
+                    text: `${gap.provider || 'Source'}: ${gap.reason || 'No detail'}`
+
+                }));
+
+            });
+
+            box.appendChild(section);
+
+        }
+
+        if (contradictions.length) {
+
+            const section = el('div', { class: 'ai-intel-section' });
+
+            section.appendChild(el('div', { class: 'ai-intel-label', text: 'Contradictions' }));
+
+            contradictions.forEach(item => {
+
+                const row = el('div', { class: 'ai-intel-item ai-intel-contradiction' });
+
+                row.appendChild(el('div', { class: 'ai-intel-statement', text: item.statement || item.type || '' }));
+
+                const meta = [item.severity || '', item.impact || ''].filter(Boolean).join(' | ');
+
+                if (meta) row.appendChild(el('div', { class: 'ai-intel-meta', text: meta }));
+
+                section.appendChild(row);
+
+            });
+
+            box.appendChild(section);
+
+        }
+
+        if (hypotheses.length) {
+
+            const section = el('div', { class: 'ai-intel-section' });
+
+            section.appendChild(el('div', { class: 'ai-intel-label', text: 'Attribution Hypotheses' }));
+
+            hypotheses.forEach(hyp => {
+
+                const row = el('div', { class: 'ai-intel-item ai-intel-hypothesis' });
+
+                row.appendChild(el('div', { class: 'ai-intel-statement', text: `${hyp.name || 'Hypothesis'} - ${hyp.score || 0}/100` }));
+
+                row.appendChild(el('div', { class: 'ai-intel-meta', text: `${hyp.type || ''} | ${hyp.band || ''}` }));
+
+                if (Array.isArray(hyp.evidence) && hyp.evidence.length) row.appendChild(el('div', { class: 'ai-intel-meta', text: `Evidence: ${hyp.evidence.join(', ')}` }));
+
+                if (Array.isArray(hyp.caveats) && hyp.caveats.length) row.appendChild(el('div', { class: 'ai-intel-meta', text: hyp.caveats[0] }));
+
+                if (hyp.recommended_next_step) row.appendChild(el('div', { class: 'ai-intel-meta', text: hyp.recommended_next_step }));
+
+                section.appendChild(row);
+
+            });
+
+            if (attribution?.semantics) section.appendChild(el('div', { class: 'ai-intel-meta', text: attribution.semantics }));
+
+            box.appendChild(section);
+
+        }
+
+        if (similaritySignals.length) {
+
+            const section = el('div', { class: 'ai-intel-section' });
+
+            section.appendChild(el('div', { class: 'ai-intel-label', text: 'Similarity Support' }));
+
+            similaritySignals.forEach(sig => {
+
+                const row = el('div', { class: 'ai-intel-item' });
+
+                row.appendChild(el('div', { class: 'ai-intel-statement', text: `${sig.entity_name || 'Similarity lead'} - ${sig.score || 0}` }));
+
+                const meta = [sig.entity_type || '', sig.label || '', sig.reason || ''].filter(Boolean).join(' | ');
+
+                if (meta) row.appendChild(el('div', { class: 'ai-intel-meta', text: meta }));
+
+                if (sig.caveat) row.appendChild(el('div', { class: 'ai-intel-meta', text: sig.caveat }));
+
+                section.appendChild(row);
+
+            });
+
+            box.appendChild(section);
+
+        }
+
+        if (pivots.length) {
+
+            const section = el('div', { class: 'ai-intel-section' });
+
+            section.appendChild(el('div', { class: 'ai-intel-label', text: 'Ranked Pivots' }));
+
+            pivots.forEach(pivot => {
+
+                const action = pivot.action || {};
+
+                const item = el('div', { class: 'ai-intel-pivot' });
+
+                item.appendChild(el('div', { class: 'ai-intel-statement', text: `${pivot.score || 0} - ${actionLabel(action)}` }));
+
+                item.appendChild(el('div', { class: 'ai-intel-meta', text: pivot.reason || '' }));
+
+                if (pivot.analyst_value) item.appendChild(el('div', { class: 'ai-intel-meta', text: pivot.analyst_value }));
+
+                if (pivot.next_step) item.appendChild(el('div', { class: 'ai-intel-meta', text: pivot.next_step }));
+
+                section.appendChild(item);
+
+            });
+
+            box.appendChild(section);
+
+        }
+
+        if (workflow) {
+
+            const questions = Array.isArray(workflow.questions)
+
+                ? workflow.questions.slice(0, 3)
+
+                : Array.isArray(workflow.open_questions)
+
+                    ? workflow.open_questions.slice(0, 3)
+
+                    : [];
+
+            const nextSteps = Array.isArray(workflow.next_steps) ? workflow.next_steps.slice(0, 3) : [];
+
+            const change = workflow.change_my_mind && typeof workflow.change_my_mind === 'object' ? workflow.change_my_mind : {};
+
+            if (nextSteps.length) {
+
+                const section = el('div', { class: 'ai-intel-section' });
+
+                section.appendChild(el('div', { class: 'ai-intel-label', text: 'Analyst Next Steps' }));
+
+                nextSteps.forEach(step => {
+
+                    const row = el('div', { class: 'ai-intel-item' });
+
+                    row.appendChild(el('div', { class: 'ai-intel-statement', text: `${step.title || 'step'}: ${step.target || ''}` }));
+
+                    if (step.next_step) row.appendChild(el('div', { class: 'ai-intel-meta', text: step.next_step }));
+
+                    section.appendChild(row);
+
+                });
+
+                box.appendChild(section);
+
+            }
+
+            if (questions.length) {
+
+                const section = el('div', { class: 'ai-intel-section' });
+
+                section.appendChild(el('div', { class: 'ai-intel-label', text: 'Analyst Questions' }));
+
+                questions.forEach(question => section.appendChild(el('div', { class: 'ai-intel-item', text: question })));
+
+                box.appendChild(section);
+
+            }
+
+            const strengthen = Array.isArray(change.would_strengthen) ? change.would_strengthen.slice(0, 2) : [];
+
+            const weaken = Array.isArray(change.would_weaken) ? change.would_weaken.slice(0, 2) : [];
+
+            if (strengthen.length || weaken.length) {
+
+                const section = el('div', { class: 'ai-intel-section' });
+
+                section.appendChild(el('div', { class: 'ai-intel-label', text: 'Change My Mind' }));
+
+                strengthen.forEach(text => section.appendChild(el('div', { class: 'ai-intel-item', text: `Strengthen: ${text}` })));
+
+                weaken.forEach(text => section.appendChild(el('div', { class: 'ai-intel-item', text: `Weaken: ${text}` })));
+
+                box.appendChild(section);
+
+            }
+
+        }
+
+        if (reportHasContent) {
+
+            const section = el('div', { class: 'ai-intel-section' });
+
+            section.appendChild(el('div', { class: 'ai-intel-label', text: 'Report Draft' }));
+
+            const row = el('div', { class: 'ai-intel-item ai-intel-report' });
+
+            if (report.title) row.appendChild(el('div', { class: 'ai-intel-statement', text: report.title }));
+
+            if (report.executive_summary) row.appendChild(el('div', { class: 'ai-intel-meta', text: report.executive_summary }));
+
+            const findings = Array.isArray(report.key_findings) ? report.key_findings.slice(0, 4) : [];
+
+            findings.forEach(item => row.appendChild(el('div', { class: 'ai-intel-meta', text: `Finding: ${item}` })));
+
+            if (report.attribution_assessment) row.appendChild(el('div', { class: 'ai-intel-meta', text: report.attribution_assessment }));
+
+            section.appendChild(row);
+
+            box.appendChild(section);
+
+        }
+
+        return box;
+
+    }
+
+
+
+    function sanitizeAssistantNarrative(text, intelligence = null) {
+
+        let value = String(text || '').trim();
+
+        if (!value) return '';
+
+        if (/^\s*\{[\s\S]*"answer"\s*:/.test(value)) return '';
+
+        const jsonStart = value.search(/\n\s*\{[\s\S]*"answer"\s*:/);
+
+        if (jsonStart >= 0) value = value.slice(0, jsonStart).trim();
+
+        if (intelligence && typeof intelligence === 'object') {
+
+            const noisyPrefix = /^(FACT|GAP|CONTRADICTION|ASSESSMENT|CAUTION|HYPOTHESIS|ATTRIBUTION CAVEAT|WHAT WOULD STRENGTHEN|WHAT WOULD WEAKEN|MEMORY):/i;
+
+            value = value
+
+                .split(/\r?\n/)
+
+                .filter(line => !noisyPrefix.test(line.trim()))
+
+                .filter(line => line.trim().toLowerCase() !== 'run')
+
+                .join('\n')
+
+                .replace(/\n{3,}/g, '\n\n')
+
+                .trim();
+
+        }
+
+        return value;
+
+    }
+
+
+
+    function cleanNarrativeText(text) {
+
+        return String(text || '')
+
+            .replace(/\*\*/g, '')
+
+            .replace(/^[-*]\s+/, '')
+
+            .trim();
+
+    }
+
+
+
+    function normalizeAssistantText(text) {
+
+        let value = String(text || '').trim();
+
+        if (!value) return '';
+
+        try {
+
+            const parsed = JSON.parse(value);
+
+            value = formatStructuredAnswer(parsed);
+
+        } catch (_) {
+
+            if (/^\{[\s\S]+\}$/.test(value) && /'[^']+'\s*:/.test(value)) {
+
+                value = value
+
+                    .replace(/^\{|\}$/g, '')
+
+                    .replace(/'([A-Za-z0-9_ -]+)'\s*:/g, '\n$1:')
+
+                    .replace(/\],\s*/g, '\n')
+
+                    .replace(/\[\s*/g, '')
+
+                    .replace(/'\s*,\s*'/g, '\n- ')
+
+                    .replace(/'/g, '')
+
+                    .replace(/,\s*(?=[A-Za-z_ -]+:)/g, '\n')
+
+                    .trim();
+
+            }
+
+        }
+
+        return value;
+
+    }
+
+
+
+    function formatStructuredAnswer(value) {
+
+        if (!value || typeof value !== 'object') return String(value || '');
+
+        const source = value.answer && typeof value.answer === 'object' ? value.answer : value;
+
+        if (typeof source === 'string') return source;
+
+        const labels = {
+
+            assessment: 'Assessment',
+
+            executive_summary: 'Executive Summary',
+
+            key_findings: 'Key Findings',
+
+            observed_facts: 'Observed Facts',
+
+            facts: 'Observed Facts',
+
+            provider_claims: 'Provider Claims',
+
+            analytic_inferences: 'Analytic Inferences',
+
+            inferences: 'Analytic Inferences',
+
+            contradictions: 'Contradictions',
+
+            noise: 'Noise / Discarded Leads',
+
+            discarded_leads: 'Noise / Discarded Leads',
+
+            confidence: 'Confidence',
+
+            recommended_pivots: 'Recommended Passive Pivots',
+
+            next_steps: 'Recommended Passive Pivots',
+
+            do_not_pivot_on: 'Do Not Pivot On',
+
+            unresolved_questions: 'Unresolved Questions',
+
+            open_questions: 'Unresolved Questions',
+
+            provenance: 'Provenance',
+
+            caveats: 'Caveats',
+
+            reporting_guidance: 'Reporting Guidance'
+
+        };
+
+        const keys = Object.keys(labels).concat(Object.keys(source).filter(key => !(key in labels)));
+
+        const lines = [];
+
+        keys.forEach(key => {
+
+            if (!(key in source)) return;
+
+            const item = source[key];
+
+            if (item === null || item === undefined || item === '' || (Array.isArray(item) && !item.length)) return;
+
+            lines.push(labels[key] || key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()));
+
+            if (Array.isArray(item)) {
+
+                item.slice(0, 12).forEach(entry => {
+
+                    const text = typeof entry === 'object'
+
+                        ? (entry.statement || entry.value || entry.name || entry.reason || JSON.stringify(entry))
+
+                        : String(entry);
+
+                    if (text.trim()) lines.push(`- ${text.trim()}`);
+
+                });
+
+            } else if (typeof item === 'object') {
+
+                Object.entries(item).slice(0, 12).forEach(([subKey, subVal]) => {
+
+                    const text = typeof subVal === 'object' ? JSON.stringify(subVal) : String(subVal);
+
+                    if (text.trim()) lines.push(`- ${subKey.replace(/_/g, ' ')}: ${text.trim()}`);
+
+                });
+
+            } else {
+
+                lines.push(String(item).trim());
+
+            }
+
+            lines.push('');
+
+        });
+
+        return lines.join('\n').trim();
+
+    }
+
+
+
+    const NARRATIVE_SECTIONS = new Map([
+
+        ['assessment', { label: 'Assessment', icon: 'fa-scale-balanced', tone: 'assessment' }],
+
+        ['executive summary', { label: 'Executive Summary', icon: 'fa-file-lines', tone: 'summary' }],
+
+        ['summary', { label: 'Summary', icon: 'fa-file-lines', tone: 'summary' }],
+
+        ['key findings', { label: 'Key Findings', icon: 'fa-list-check', tone: 'findings' }],
+
+        ['observed facts', { label: 'Observed Facts', icon: 'fa-fingerprint', tone: 'facts' }],
+
+        ['facts', { label: 'Observed Facts', icon: 'fa-fingerprint', tone: 'facts' }],
+
+        ['provider claims', { label: 'Provider Claims', icon: 'fa-tower-broadcast', tone: 'claims' }],
+
+        ['analytic inferences', { label: 'Analytic Inferences', icon: 'fa-brain', tone: 'inferences' }],
+
+        ['inferences', { label: 'Analytic Inferences', icon: 'fa-brain', tone: 'inferences' }],
+
+        ['attribution assessment', { label: 'Attribution Assessment', icon: 'fa-user-secret', tone: 'attribution' }],
+
+        ['attribution hypotheses', { label: 'Attribution Hypotheses', icon: 'fa-user-secret', tone: 'attribution' }],
+
+        ['contradictions', { label: 'Contradictions', icon: 'fa-triangle-exclamation', tone: 'contradictions' }],
+
+        ['noise / discarded leads', { label: 'Noise / Discarded Leads', icon: 'fa-filter-circle-xmark', tone: 'noise' }],
+
+        ['noise/discarded leads', { label: 'Noise / Discarded Leads', icon: 'fa-filter-circle-xmark', tone: 'noise' }],
+
+        ['discarded leads', { label: 'Noise / Discarded Leads', icon: 'fa-filter-circle-xmark', tone: 'noise' }],
+
+        ['confidence', { label: 'Confidence', icon: 'fa-signal', tone: 'confidence' }],
+
+        ['caveats', { label: 'Caveats', icon: 'fa-circle-exclamation', tone: 'caveats' }],
+
+        ['recommended passive pivots', { label: 'Recommended Passive Pivots', icon: 'fa-route', tone: 'pivots' }],
+
+        ['recommended pivots', { label: 'Recommended Passive Pivots', icon: 'fa-route', tone: 'pivots' }],
+
+        ['recommended next steps', { label: 'Recommended Next Steps', icon: 'fa-forward-step', tone: 'next' }],
+
+        ['next steps', { label: 'Recommended Next Steps', icon: 'fa-forward-step', tone: 'next' }],
+
+        ['do not pivot on', { label: 'Do Not Pivot On', icon: 'fa-ban', tone: 'avoid' }],
+
+        ['open questions', { label: 'Open Questions', icon: 'fa-circle-question', tone: 'questions' }],
+
+        ['unresolved questions', { label: 'Open Questions', icon: 'fa-circle-question', tone: 'questions' }],
+
+        ['provenance', { label: 'Provenance', icon: 'fa-code-branch', tone: 'provenance' }],
+
+        ['reporting guidance', { label: 'Reporting Guidance', icon: 'fa-clipboard-check', tone: 'guidance' }]
+
+    ]);
+
+
+
+    function normalizeSectionKey(value) {
+
+        return cleanNarrativeText(value)
+
+            .replace(/[:：]$/, '')
+
+            .replace(/\s+/g, ' ')
+
+            .trim()
+
+            .toLowerCase();
+
+    }
+
+
+
+    function sectionMeta(title) {
+
+        const key = normalizeSectionKey(title);
+
+        return NARRATIVE_SECTIONS.get(key) || null;
+
+    }
+
+
+
+    function isPlainSectionHeading(line) {
+
+        const cleaned = cleanNarrativeText(line).replace(/[:：]$/, '').trim();
+
+        if (!cleaned || cleaned.length > 64) return null;
+
+        const meta = sectionMeta(cleaned);
+
+        if (meta) return meta;
+
+        if (/^[A-Z][A-Za-z0-9 /&-]{2,}$/.test(cleaned) && !/[.!?]$/.test(cleaned) && cleaned.split(/\s+/).length <= 5) {
+
+            return { label: cleaned, icon: 'fa-layer-group', tone: 'generic' };
+
+        }
+
+        return null;
+
+    }
+
+
+
+    function renderNarrativeContent(text, role = 'assistant') {
+
+        const isReport = /^AI-MTIP Intelligence Report/i.test(String(text || '').trim());
+
+        const root = el('div', { class: `ai-msg-text ${role === 'assistant' ? 'ai-narrative' : ''}${isReport ? ' ai-report-narrative' : ''}` });
+
+        const value = normalizeAssistantText(text);
+
+        if (!value || role !== 'assistant') {
+
+            root.textContent = value;
+
+            return root;
+
+        }
+
+        const lines = value.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+
+        if (!lines.length) return root;
+
+        let currentSection = null;
+
+        let currentList = null;
+
+        let startIndex = 0;
+
+        if (isReport) {
+
+            const title = cleanNarrativeText(lines[0]);
+
+            const reportHead = el('div', { class: 'ai-report-head' });
+
+            reportHead.appendChild(el('div', { class: 'ai-report-kicker', text: 'Analyst Report' }));
+
+            reportHead.appendChild(el('h4', { text: title }));
+
+            reportHead.appendChild(el('div', { class: 'ai-report-subtitle', text: 'Structured from current AI-MTIP evidence and provider context.' }));
+
+            root.appendChild(reportHead);
+
+            startIndex = 1;
+
+        }
+
+        const ensureSection = (title, meta = null) => {
+
+            const resolved = meta || sectionMeta(title) || { label: cleanNarrativeText(title).replace(/:$/, ''), icon: 'fa-layer-group', tone: 'generic' };
+
+            currentSection = el('section', { class: `ai-narrative-section ai-section-${resolved.tone || 'generic'}` });
+
+            const heading = el('div', { class: 'ai-narrative-heading' });
+
+            heading.innerHTML = `<i class="fa-solid ${resolved.icon || 'fa-layer-group'}"></i><span>${escapeHtml(resolved.label)}</span>`;
+
+            currentSection.appendChild(heading);
+
+            root.appendChild(currentSection);
+
+            currentList = null;
+
+        };
+
+        const appendParagraph = line => {
+
+            const target = currentSection || root;
+
+            target.appendChild(el('p', { class: 'ai-narrative-paragraph', text: cleanNarrativeText(line) }));
+
+            currentList = null;
+
+        };
+
+        lines.slice(startIndex).forEach(line => {
+
+            const heading = line.match(/^\*\*(.+?)\*\*:?$/)
+
+                || line.match(/^#{1,4}\s+(.+)$/)
+
+                || (line.length < 46 ? line.match(/^([A-Za-z][A-Za-z0-9 /&-]+):$/) : null);
+
+            if (heading) {
+
+                ensureSection(heading[1]);
+
+                return;
+
+            }
+
+            const plainHeading = isPlainSectionHeading(line);
+
+            if (plainHeading) {
+
+                ensureSection(line, plainHeading);
+
+                return;
+
+            }
+
+            const numbered = line.match(/^\d+[.)]\s+(.+)$/);
+
+            const bulleted = line.match(/^[-*]\s+(.+)$/);
+
+            if (numbered || bulleted) {
+
+                const target = currentSection || root;
+
+                if (!currentList) {
+
+                    currentList = el(numbered ? 'ol' : 'ul', { class: 'ai-narrative-list' });
+
+                    target.appendChild(currentList);
+
+                }
+
+                currentList.appendChild(el('li', { text: cleanNarrativeText((numbered || bulleted)[1]) }));
+
+                return;
+
+            }
+
+            appendParagraph(line);
+
+        });
+
+        return root;
+
+    }
+
+
+
+    function renderMessage(role, text, actions = [], intelligence = null, options = {}) {
+
+        const list = document.getElementById('ai-chat-messages');
+
+        if (!list) return;
+
+        const bubble = el('div', { class: `ai-msg ai-msg-${role}` });
+
+        bubble.appendChild(el('div', { class: 'ai-msg-role', text: role === 'user' ? 'Analyst' : 'MTIP AI' }));
+
+        const intelBox = role === 'assistant' && !options.skipBrief ? renderIntelligence(intelligence) : null;
+
+        const narrative = role === 'assistant' ? sanitizeAssistantNarrative(text, intelligence) : String(text || '');
+
+        if (narrative) bubble.appendChild(renderNarrativeContent(narrative, role));
+
+        if (intelBox) bubble.appendChild(intelBox);
+
+        if (!intelBox && !narrative) {
+
+            bubble.appendChild(el('div', { class: 'ai-msg-text ai-msg-muted', text: 'No analyst narrative returned.' }));
+
+        }
+
+        if (actions && actions.length) {
+
+            const actionBox = el('div', { class: 'ai-actions' });
+
+            actionBox.appendChild(el('div', { class: 'ai-actions-heading', text: 'Approved Manual Pivots' }));
+
+            actions.forEach(action => {
+
+                const id = `ai-action-${++state.actionId}`;
+
+                state.actions.set(id, action);
+
+                const label = actionLabel(action);
+
+                const card = el('div', { class: 'ai-action-card' });
+
+                const head = el('div', { class: 'ai-action-head' });
+
+                head.innerHTML = `<i class="fa-solid fa-route"></i><span>${escapeHtml(label)}</span>`;
+
+                card.appendChild(head);
+
+                card.appendChild(el('div', { class: 'ai-action-reason', text: action.reason || 'Manual AI-MTIP pivot' }));
+
+                const btn = el('button', { class: 'btn-primary ai-run-action', 'data-action-id': id });
+
+                btn.innerHTML = '<i class="fa-solid fa-play"></i> Run';
+
+                card.appendChild(btn);
+
+                actionBox.appendChild(card);
+
+            });
+
+            bubble.appendChild(actionBox);
+
+        }
+
+        const rejectedPivots = Array.isArray(options.rejectedPivots) ? options.rejectedPivots : [];
+
+        if (role === 'assistant' && rejectedPivots.length) {
+
+            bubble.appendChild(renderRejectedPivots(rejectedPivots));
+
+        }
+
+        list.appendChild(bubble);
+
+        list.scrollTop = list.scrollHeight;
+
+    }
+
+
+
+    function renderRejectedPivots(items) {
+
+        const box = el('details', { class: 'ai-rejected-pivots' });
+
+        box.appendChild(el('summary', { text: `Suppressed Pivot Suggestions (${items.length})` }));
+
+        const body = el('div', { class: 'ai-rejected-body' });
+
+        items.slice(0, 10).forEach(item => {
+
+            const action = item?.action || {};
+
+            const reason = item?.reason || 'Suppressed by AI-MTIP pivot policy.';
+
+            const tags = Array.isArray(item?.tags) && item.tags.length ? item.tags.join(', ') : '';
+
+            const row = el('div', { class: 'ai-rejected-row' });
+
+            row.appendChild(el('div', { class: 'ai-rejected-title', text: actionLabel(action) }));
+
+            row.appendChild(el('div', { class: 'ai-rejected-reason', text: reason }));
+
+            if (tags) row.appendChild(el('div', { class: 'ai-rejected-tags', text: tags }));
+
+            body.appendChild(row);
+
+        });
+
+        box.appendChild(body);
+
+        return box;
+
+    }
+
+
+
+    function renderThinkingMessage(id, label = 'Thinking') {
+
+        const list = document.getElementById('ai-chat-messages');
+
+        if (!list) return null;
+
+        removeThinkingMessage(id);
+
+        const bubble = el('div', { class: 'ai-msg ai-msg-assistant ai-msg-thinking', id });
+
+        bubble.appendChild(el('div', { class: 'ai-msg-role', text: 'MTIP AI' }));
+
+        const body = el('div', { class: 'ai-typing' });
+
+        body.appendChild(el('span', { class: 'ai-typing-label', text: label }));
+
+        body.appendChild(el('span', { class: 'ai-typing-dots', 'aria-hidden': 'true' }, [
+
+            el('span'),
+
+            el('span'),
+
+            el('span')
+
+        ]));
+
+        bubble.appendChild(body);
+
+        list.appendChild(bubble);
+
+        list.scrollTop = list.scrollHeight;
+
+        return bubble;
+
+    }
+
+
+
+    function renderCasePanel(caseState = state.caseState) {
+
+        const box = document.getElementById('ai-case-panel');
+
+        if (!box) return;
+
+        if (!caseState) {
+
+            box.innerHTML = `
+
+                <div class="ai-case-empty">No case synced yet.</div>
+
+                <div class="ai-case-buttons">
+
+                    <button type="button" id="ai-case-sync" class="btn-secondary"><i class="fa-solid fa-arrows-rotate"></i> Sync Case</button>
+
+                    <button type="button" id="ai-case-step" class="btn-secondary" disabled><i class="fa-solid fa-route"></i> Next Step</button>
+
+                    <button type="button" id="ai-case-run-next" class="btn-secondary" disabled><i class="fa-solid fa-play"></i> Run Next</button>
+
+                    <button type="button" id="ai-case-report" class="btn-secondary" disabled><i class="fa-solid fa-file-lines"></i> Case Report</button>
+
+                </div>
+
+            `;
+
+            return;
+
+        }
+
+        const root = caseState.root || {};
+
+        const assessment = caseState.assessment || {};
+
+        const next = caseState.next_step || {};
+
+        const sources = Array.isArray(next.recommended_sources) ? next.recommended_sources : [];
+
+        const timeline = Array.isArray(caseState.timeline) ? caseState.timeline.slice(0, 6) : [];
+
+        box.innerHTML = `
+
+            <div class="ai-case-head">
+
+                <div>
+
+                    <div class="ai-case-kicker">AEAD Case</div>
+
+                    <div class="ai-case-title">${escapeHtml(root.type || 'context')}: ${escapeHtml(root.value || 'current evidence')}</div>
+
+                </div>
+
+                <b>${escapeHtml(assessment.confidence || 'insufficient_evidence')}</b>
+
+            </div>
+
+            <div class="ai-case-metrics">
+
+                <span><b>${escapeHtml(assessment.source_count || 0)}</b> Sources</span>
+
+                <span><b>${escapeHtml(assessment.observation_count || 0)}</b> Observations</span>
+
+                <span><b>${escapeHtml(assessment.claim_count || 0)}</b> Claims</span>
+
+                <span><b>${escapeHtml(assessment.relationship_count || 0)}</b> Links</span>
+
+                <span><b>${escapeHtml(assessment.rejected_pivot_count || 0)}</b> Suppressed</span>
+
+            </div>
+
+            ${assessment.assessment_text ? `<div class="ai-case-assessment-text"><div class="ai-case-label">AI Assessment</div><div>${escapeHtml(assessment.assessment_text)}</div></div>` : ''}
+
+            <div class="ai-case-next">
+
+                <div class="ai-case-label">Next</div>
+
+                <div>${escapeHtml(next.reason || 'Sync evidence, then request the next AEAD step.')}</div>
+
+                ${sources.length ? `<div class="ai-case-source-row">${sources.map(src => `<span title="${escapeHtml(src.reason || '')}">${escapeHtml(src.label || src.source_id)}</span>`).join('')}</div>` : ''}
+
+            </div>
+
+            <div class="ai-case-buttons">
+
+                <button type="button" id="ai-case-sync" class="btn-secondary"><i class="fa-solid fa-arrows-rotate"></i> Sync Case</button>
+
+                <button type="button" id="ai-case-step" class="btn-secondary"><i class="fa-solid fa-route"></i> Next Step</button>
+
+                <button type="button" id="ai-case-run-next" class="btn-secondary"><i class="fa-solid fa-play"></i> Run Next</button>
+
+                <button type="button" id="ai-case-assess" class="btn-secondary"><i class="fa-solid fa-scale-balanced"></i> Assess</button>
+
+                <button type="button" id="ai-case-report" class="btn-secondary"><i class="fa-solid fa-file-lines"></i> Report</button>
+
+                <button type="button" id="ai-case-export-workspace" class="btn-secondary"><i class="fa-solid fa-box-archive"></i> Export AI Workspace</button>
+
+                <button type="button" id="ai-case-export" class="btn-secondary"><i class="fa-solid fa-download"></i> Export MD</button>
+
+                <button type="button" id="ai-case-export-json" class="btn-secondary"><i class="fa-solid fa-code"></i> Export JSON</button>
+
+            </div>
+
+            <details class="ai-case-timeline">
+
+                <summary>Timeline (${timeline.length})</summary>
+
+                <div>
+
+                    ${timeline.map(item => `
+
+                        <div class="ai-case-event">
+
+                            <b>${escapeHtml(item.phase || '')}</b>
+
+                            <span>${escapeHtml(item.title || '')}</span>
+
+                            ${item.detail ? `<small>${escapeHtml(item.detail)}</small>` : ''}
+
+                        </div>
+
+                    `).join('') || '<div class="ai-case-empty">No timeline entries.</div>'}
+
+                </div>
+
+            </details>
+
+            <details id="ai-case-related-ui" class="ai-case-timeline">
+
+                <summary>Cross-Case Memory</summary>
+
+                <div id="ai-case-related-content" style="padding: 0.5rem; text-align: center;">
+
+                    <button type="button" id="ai-case-load-related" class="btn-secondary"><i class="fa-solid fa-network-wired"></i> Find Related Cases</button>
+
+                </div>
+
+            </details>
+
+        `;
+
+    }
+
+
+
+    async function syncCase(note = 'Manual case sync') {
+
+        if (state.caseBusy) return state.caseState;
+
+        state.caseBusy = true;
+
+        try {
+
+            const data = await fetchJson(`${API_BASE}/api/ai/case/sync`, {
+
+                method: 'POST',
+
+                headers: { 'Content-Type': 'application/json' },
+
+                body: JSON.stringify({
+
+                    case_id: state.caseId || '',
+
+                    page_context: compactDomContext(),
+
+                    note
+
+                }),
+
+                timeoutMs: aiRequestTimeoutMs(10)
+
+            });
+
+            state.caseId = data.case_id || state.caseId;
+
+            state.caseState = data;
+
+            renderCasePanel();
+
+            return data;
+
+        } finally {
+
+            state.caseBusy = false;
+
+        }
+
+    }
+
+
+
+    async function planCaseStep() {
+
+        const data = await fetchJson(`${API_BASE}/api/ai/case/step`, {
+
+            method: 'POST',
+
+            headers: { 'Content-Type': 'application/json' },
+
+            body: JSON.stringify({
+
+                case_id: state.caseId || '',
+
+                page_context: compactDomContext()
+
+            }),
+
+            timeoutMs: aiRequestTimeoutMs(12)
+
+        });
+
+        state.caseId = data.case_id || state.caseId;
+
+        state.caseState = data;
+
+        renderCasePanel();
+
+        const next = data.next_step || {};
+
+        const sources = (next.recommended_sources || []).map(src => src.label || src.source_id).filter(Boolean).join(', ');
+
+        renderMessage('assistant', `AEAD next step: ${next.reason || 'Assess current case state.'}${sources ? `\n\nRecommended sources: ${sources}` : ''}`, next.action ? [next.action] : []);
+
+    }
+
+
+
+    function caseProviderKeys() {
+
+        const local = name => localStorage.getItem(name) || '';
+
+        const input = (id, storageKey = '') => document.getElementById(id)?.value?.trim() || (storageKey ? local(storageKey) : '');
+
+        return {
+
+            vt_key: local('ioc_vt_key'),
+
+            abusech_key: input('abusech-key', 'ioc_abusech_key') || local('ioc_tf_key'),
+
+            malshare_key: input('malshare-key', 'ioc_malshare_key'),
+
+            otx_key: input('otx-key', 'ioc_otx_key'),
+
+            triage_key: input('triage-key', 'ioc_triage_key'),
+
+            tip_key: input('tip-key', 'ioc_tip_key'),
+
+            rwlive_key: input('rwlive-key', 'ioc_rwlive_key'),
+
+            cb_key: input('cb-key', 'ioc_cb_key'),
+
+            ransomlook_key: input('ransomlook-key', 'ioc_ransomlook_key'),
+
+            threatbook_key: local('ioc_threatbook_key'),
+
+            silentpush_key: local('ioc_silentpush_key'),
+
+            driftnet_key: local('ioc_driftnet_key'),
+
+            urlscan_key: local('ioc_urlscan_key'),
+
+            ha_key: local('ioc_ha_key'),
+
+            shodan_key: local('ioc_shodan_key'),
+
+            censys_key: local('ioc_censys_key'),
+
+            etugen_key: local('ioc_etugen_key'),
+
+            fofa_key: local('ioc_fofa_key'),
+
+            validin_key: local('ioc_validin_key'),
+
+            pulsedive_key: local('ioc_pulsedive_key'),
+
+            dnsdumpster_key: local('ioc_dnsdumpster_key'),
+
+            twitter_key: local('ioc_twitter_key'),
+
+            github_key: local('ioc_github_key'),
+
+            abuseipdb_key: local('ioc_abuseipdb_key'),
+
+            greynoise_key: local('ioc_greynoise_key'),
+
+            leakix_key: local('ioc_leakix_key'),
+
+            phishstats_key: local('ioc_phishstats_key')
+
+        };
+
+    }
+
+
+
+    function githubReposForCase() {
+
+        const repos = localStorage.getItem('ioc_github_repos') || 'mthcht/ThreatHunting-Keywords\nmthcht/ThreatIntel-Reports\nalexander-hanel/APTnotes-md\nblackorbird/APT_REPORT\nThreatLabz/ransomware_notes';
+
+        return repos.split('\n').map(item => item.trim()).filter(Boolean);
+
+    }
+
+
+
+    async function runCaseNextSource() {
+
+        if (!state.caseId) await syncCase('Source execution requested.');
+
+        const data = await fetchJson(`${API_BASE}/api/ai/case/run-next`, {
+
+            method: 'POST',
+
+            headers: { 'Content-Type': 'application/json' },
+
+            body: JSON.stringify({
+
+                case_id: state.caseId || '',
+
+                page_context: compactDomContext(),
+
+                keys: caseProviderKeys(),
+
+                github_repos: githubReposForCase(),
+
+                max_sources: 1
+
+            }),
+
+            timeoutMs: aiRequestTimeoutMs(20)
+
+        });
+
+        state.caseId = data.case_id || state.caseId;
+
+        state.caseState = data;
+
+        renderCasePanel();
+
+        const executions = Array.isArray(data.executions) ? data.executions : [];
+
+        const summary = executions.map(item => `${item.source_id}: ${item.status}${item.count !== undefined ? ` (${item.count})` : ''}${item.error ? ` - ${item.error}` : ''}`).join('\n');
+
+        renderMessage('assistant', summary ? `AEAD source execution completed:\n${summary}` : 'No source was executed. The case may be ready for assessment.');
+
+    }
+
+
+
+    async function generateCaseAssessment() {
+
+        if (!state.caseId) await syncCase('Assessment requested.');
+
+        renderMessage('assistant', 'Generating final case assessment...');
+
+        const data = await fetchJson(`${API_BASE}/api/ai/case/${state.caseId}/assess`, {
+
+            method: 'POST',
+
+            timeoutMs: aiRequestTimeoutMs(60)
+
+        });
+
+        state.caseId = data.case_id || state.caseId;
+
+        state.caseState = data;
+
+        renderCasePanel();
+
+        renderMessage('assistant', 'Assessment generated and added to case panel.');
+
+    }
+
+
+
+    async function draftCaseReport() {
+
+        if (!state.caseId) await syncCase('Report requested.');
+
+        if (!state.caseId) throw new Error('No MTIP AI case is available.');
+
+        const data = await fetchJson(`${API_BASE}/api/ai/case/${encodeURIComponent(state.caseId)}/report`, {
+
+            timeoutMs: aiRequestTimeoutMs(12)
+
+        });
+
+        state.caseState = data.case || state.caseState;
+
+        renderCasePanel();
+
+        renderMessage('assistant', data.report || 'No case report returned.', [], state.caseState?.intelligence || null, { skipBrief: true });
+
+    }
+
+
+
+    async function loadRelatedCases() {
+
+        if (!state.caseId) return;
+
+        const box = document.getElementById('ai-case-related-content');
+
+        if (!box) return;
+
+        box.innerHTML = '<div class="ai-case-empty"><i class="fa-solid fa-spinner fa-spin"></i> Loading...</div>';
+
+        try {
+
+            const data = await fetchJson(`${API_BASE}/api/ai/case/${encodeURIComponent(state.caseId)}/related`);
+
+            const related = data.related_cases || [];
+
+            if (!related.length) {
+
+                box.innerHTML = '<div class="ai-case-empty">No correlated cases found.</div>';
+
+                return;
+
+            }
+
+            let html = '';
+
+            related.forEach(item => {
+
+                html += `
+
+                    <div class="ai-case-event" style="margin-bottom: 0.5rem; text-align: left;">
+
+                        <b>Case:</b> ${escapeHtml(item.case_id)}<br>
+
+                        <b>Target:</b> <code>${escapeHtml(item.root_type)}:${escapeHtml(item.root_value)}</code><br>
+
+                        <b>Overlap:</b> <code>${escapeHtml(item.match_value)}</code> (${escapeHtml(item.match_type)})
+
+                    </div>
+
+                `;
+
+            });
+
+            box.innerHTML = html;
+
+        } catch (e) {
+
+            box.innerHTML = `<div class="ai-case-empty" style="color:var(--text-error);">Error: ${escapeHtml(e.message)}</div>`;
+
+        }
+
+    }
+
+
+
+    function removeThinkingMessage(id) {
+
+        if (!id) return;
+
+        document.getElementById(id)?.remove();
+
+    }
+
+
+
+    function actionLabel(action) {
+
+        const labels = {
+
+            lookup_hash: 'Hash Lookup',
+
+            lookup_domain: 'Domain Lookup',
+
+            lookup_ip: 'IP Lookup',
+
+            lookup_url: 'URL Lookup',
+
+            keyword_search: 'Keyword Search',
+
+            infra_search: 'Infra Search',
+
+            search_cti_articles: 'Search CTI Articles',
+
+            search_threat_actor: 'Search Threat Actor',
+
+            search_malware: 'Search Malware & Tools',
+
+            search_yara: 'Search YARA Rules'
+
+        };
+
+        const arg = Object.values(action?.arguments || {}).find(Boolean) || '';
+
+        return `${labels[action?.tool] || action?.tool || 'Pivot'}${arg ? `: ${arg}` : ''}`;
+
+    }
+
+
+
+    function setBusy(isBusy) {
+
+        const send = document.getElementById('ai-send');
+
+        const input = document.getElementById('ai-input');
+
+        if (send) send.disabled = isBusy;
+
+        if (input) input.disabled = isBusy;
+
+        document.querySelectorAll('#ai-summary, #ai-pivots, #ai-report').forEach(btn => { btn.disabled = isBusy; });
+
+        document.getElementById('mtip-ai-panel')?.classList.toggle('ai-busy', !!isBusy);
+
+        const status = document.getElementById('ai-status');
+
+        if (status) status.textContent = state.settings?.available ? 'Ready' : 'Not configured';
+
+    }
+
+
+
+    function updateContextNotice() {
+
+        const notice = document.getElementById('ai-context-notice');
+
+        if (!notice) return;
+
+        const ctx = compactDomContext();
+
+        const meta = ctx?.context_meta || {};
+
+        if (meta.omitted_raw_result || meta.backend_truncated || ctx?.truncated) {
+
+            const providers = meta.providers_in_snapshot !== undefined ? `${meta.providers_in_snapshot} provider snapshot(s)` : 'compact evidence snapshot';
+
+            notice.style.display = 'block';
+
+            notice.textContent = `AI context: using ${providers}; full downloadable JSON is not sent to the model.`;
+
+        } else {
+
+            notice.style.display = 'none';
+
+            notice.textContent = '';
+
+        }
+
+    }
+
+
+
+    function setMode(mode) {
+
+        state.mode = mode === 'agent' ? 'agent' : 'assist';
+
+        document.querySelectorAll('[data-ai-mode]').forEach(btn => {
+
+            btn.classList.toggle('active', btn.dataset.aiMode === state.mode);
+
+        });
+
+        const controls = document.getElementById('ai-agent-controls');
+
+        if (controls) controls.style.display = state.mode === 'agent' ? 'block' : 'none';
+
+    }
+
+
+
+    async function askAI(operation, text) {
+
+        const prompt = text || '';
+
+        if (!prompt.trim()) return;
+
+        updateContextNotice();
+
+        const requestId = ++state.chatRequestId;
+
+        const thinkingId = `ai-thinking-${requestId}`;
+
+        state.messages.push({ role: 'user', content: prompt });
+
+        renderMessage('user', prompt);
+
+        renderThinkingMessage(thinkingId, operation === 'draft_report' ? 'Drafting report' : 'Thinking');
+
+        setBusy(true);
+
+        try {
+
+            const data = await fetchJson(`${API_BASE}/api/ai/chat`, {
+
+                method: 'POST',
+
+                headers: { 'Content-Type': 'application/json' },
+
+                body: JSON.stringify({
+
+                    operation,
+
+                    messages: state.messages.slice(-10),
+
+                    page_context: compactDomContext()
+
+                }),
+
+                timeoutMs: aiRequestTimeoutMs(15)
+
+            });
+
+            if (requestId !== state.chatRequestId) {
+
+                removeThinkingMessage(thinkingId);
+
+                return;
+
+            }
+
+            removeThinkingMessage(thinkingId);
+
+            const answer = data.answer || 'No response.';
+
+            state.messages.push({ role: 'assistant', content: answer });
+
+            renderMessage('assistant', answer, data.proposed_actions || [], data.intelligence || null, {
+
+                skipBrief: operation === 'draft_report',
+
+                rejectedPivots: data.rejected_pivots || []
+
+            });
+
+            syncCase(`AI ${operation} response completed.`).catch(err => console.debug('MTIP AI case sync skipped:', err));
+
+        } catch (e) {
+
+            if (requestId !== state.chatRequestId) {
+
+                removeThinkingMessage(thinkingId);
+
+                return;
+
+            }
+
+            removeThinkingMessage(thinkingId);
+
+            renderMessage('assistant', e.message || 'MTIP AI is unavailable.');
+
+        } finally {
+
+            removeThinkingMessage(thinkingId);
+
+            if (requestId === state.chatRequestId) setBusy(false);
+
+        }
+
+    }
+
+
+
+    async function runAction(id, button) {
+
+        const action = state.actions.get(id);
+
+        if (!action) return;
+
+        if (button) button.disabled = true;
+
+        try {
+
+            renderMessage('assistant', `Running approved action: ${actionLabel(action)}.`);
+
+            const data = await fetchJson(`${API_BASE}/api/ai/tool/execute`, {
+
+                method: 'POST',
+
+                headers: { 'Content-Type': 'application/json' },
+
+                body: JSON.stringify({ ...action, page: compactDomContext().page || '' })
+
+            });
+
+            if (typeof window.mtipRunApprovedAction !== 'function') {
+
+                throw new Error('AI-MTIP action bridge is unavailable.');
+
+            }
+
+            await window.mtipRunApprovedAction(data.frontend_action || {});
+
+            notify('Approved AI-MTIP action started');
+
+            renderMessage('assistant', `Action started in AI-MTIP: ${actionLabel(data.action || action)}.`);
+
+            minimizePanel();
+
+        } catch (e) {
+
+            renderMessage('assistant', `Action failed: ${e.message}`);
+
+        } finally {
+
+            if (button) button.disabled = false;
+
+        }
+
+    }
+
+
+
+    function renderAgentTrace(run) {
+
+        const box = document.getElementById('ai-agent-trace');
+
+        if (!box) return;
+
+        const steps = (run?.steps || []).slice(-20);
+
+        box.innerHTML = steps.map(step => `
+
+            <div class="ai-agent-step ai-agent-step-${step.status || 'pending'}">
+
+                <div class="ai-agent-step-head">
+
+                    <span>${step.step || ''}. ${escapeHtml(step.title || step.tool || 'Step')}</span>
+
+                    <b>${escapeHtml(step.status || '')}</b>
+
+                </div>
+
+                ${step.artifact ? `<div class="ai-agent-step-artifact">${escapeHtml(step.artifact)}</div>` : ''}
+
+                ${step.reason ? `<div class="ai-agent-step-reason">${escapeHtml(step.reason)}</div>` : ''}
+
+                ${step.objective ? `<div class="ai-agent-step-reason">${escapeHtml(step.objective)}</div>` : ''}
+
+                ${step.next_step ? `<div class="ai-agent-step-reason">${escapeHtml(step.next_step)}</div>` : ''}
+
+                ${step.source ? `<div class="ai-agent-step-reason">Source: ${escapeHtml(step.source)}</div>` : ''}
+
+                ${step.detail ? `<div class="ai-agent-step-reason">${escapeHtml(step.detail)}</div>` : ''}
+
+                ${step.agent_plan?.hypotheses?.length ? `<div class="ai-agent-step-reason">Hypotheses: ${escapeHtml(step.agent_plan.hypotheses.map(h => `${h.name || 'unknown'} ${h.band || ''}`).join(' | '))}</div>` : ''}
+
+                ${step.agent_plan?.review_items?.length ? `<div class="ai-agent-step-reason">Review: ${escapeHtml(step.agent_plan.review_items.map(x => x.title || x.type || '').filter(Boolean).join(' | '))}</div>` : ''}
+
+                ${step.error ? `<div class="ai-agent-step-error">${escapeHtml(step.error)}</div>` : ''}
+
+            </div>
+
+        `).join('') || '<div class="ai-agent-empty">No agent steps yet.</div>';
+
+        const status = document.getElementById('ai-agent-run-status');
+
+        if (status) {
+
+            const bits = [
+
+                run?.status || 'idle',
+
+                `${run?.lookups_used || 0}/${run?.limits?.max_lookups || 0} lookups`,
+
+                `depth ${run?.depth || 0}/${run?.limits?.max_depth || 0}`
+
+            ];
+
+            status.textContent = bits.join(' · ');
+
+        }
+
+    }
+
+
+
+    function escapeHtml(value) {
+
+        return String(value || '').replace(/[&<>"']/g, ch => ({
+
+            '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+
+        }[ch]));
+
+    }
+
+
+
+    function agentLimits() {
+
+        return {
+
+            max_lookups: Number(document.getElementById('ai-agent-max-lookups')?.value || 20),
+
+            max_depth: Number(document.getElementById('ai-agent-max-depth')?.value || 5),
+
+            max_pivots_per_step: Number(document.getElementById('ai-agent-max-pivots')?.value || 3),
+
+            max_runtime_seconds: Number(document.getElementById('ai-agent-max-runtime')?.value || 600)
+
+        };
+
+    }
+
+
+
+    async function startAgent(goalText = '') {
+
+        if (state.agentRunning) return;
+
+        const sessionId = ++state.agentSessionId;
+
+        state.agentRunning = true;
+
+        state.agentStopRequested = false;
+
+        const startBtn = document.getElementById('ai-agent-start');
+
+        const stopBtn = document.getElementById('ai-agent-stop');
+
+        if (startBtn) startBtn.disabled = true;
+
+        if (stopBtn) stopBtn.disabled = false;
+
+        renderMessage('assistant', 'Agent investigation started. I will run only backend-validated passive AI-MTIP actions and stop on limits or your Stop command.');
+
+        try {
+
+            let run = await fetchJson(`${API_BASE}/api/ai/agent/start`, {
+
+                method: 'POST',
+
+                headers: { 'Content-Type': 'application/json' },
+
+                body: JSON.stringify({
+
+                    page_context: compactDomContext(),
+
+                    goal: goalText || document.getElementById('ai-input')?.value?.trim() || 'Investigate current AI-MTIP findings',
+
+                    limits: agentLimits()
+
+                }),
+
+                timeoutMs: aiRequestTimeoutMs(20)
+
+            });
+
+            if (sessionId !== state.agentSessionId) return;
+
+            state.agentRunId = run.agent_run_id;
+
+            renderAgentTrace(run);
+
+            await continueAgent(run, sessionId, run.agent_run_id);
+
+        } catch (e) {
+
+            if (sessionId !== state.agentSessionId) return;
+
+            renderMessage('assistant', `Agent could not start: ${e.message}`);
+
+        } finally {
+
+            if (sessionId === state.agentSessionId) {
+
+                state.agentRunning = false;
+
+                if (startBtn) startBtn.disabled = false;
+
+                if (stopBtn) stopBtn.disabled = true;
+
+            }
+
+        }
+
+    }
+
+
+
+    async function continueAgent(run, sessionId, runId) {
+
+        let current = run;
+
+        while (sessionId === state.agentSessionId && current && current.status === 'running' && current.next_action && !state.agentStopRequested) {
+
+            const label = actionLabel(current.next_action);
+
+            renderMessage('assistant', `Agent running: ${label}\nReason: ${current.next_action.reason || 'Selected as the next passive pivot.'}`);
+
+            let lastStatus = 'complete';
+
+            let lastError = '';
+
+            try {
+
+                if (typeof window.mtipRunApprovedAction === 'function') {
+
+                    await window.mtipRunApprovedAction(current.frontend_action || {});
+
+                } else {
+
+                    throw new Error('AI-MTIP action bridge is unavailable.');
+
+                }
+
+                await new Promise(resolve => setTimeout(resolve, 250));
+
+            } catch (e) {
+
+                lastStatus = 'failed';
+
+                lastError = e.message || 'Action failed';
+
+            }
+
+            current = await fetchJson(`${API_BASE}/api/ai/agent/next`, {
+
+                method: 'POST',
+
+                headers: { 'Content-Type': 'application/json' },
+
+                body: JSON.stringify({
+
+                    agent_run_id: runId,
+
+                    latest_context: compactDomContext(),
+
+                    last_status: lastStatus,
+
+                    last_error: lastError
+
+                }),
+
+                timeoutMs: aiRequestTimeoutMs(20)
+
+            });
+
+            if (sessionId !== state.agentSessionId || runId !== state.agentRunId) return;
+
+            renderAgentTrace(current);
+
+        }
+
+        if (sessionId !== state.agentSessionId || runId !== state.agentRunId) return;
+
+        if (state.agentStopRequested && runId) {
+
+            current = await fetchJson(`${API_BASE}/api/ai/agent/stop`, {
+
+                method: 'POST',
+
+                headers: { 'Content-Type': 'application/json' },
+
+                body: JSON.stringify({ agent_run_id: runId, reason: 'Analyst clicked Stop.' }),
+
+                timeoutMs: aiRequestTimeoutMs(10)
+
+            });
+
+            if (sessionId !== state.agentSessionId || runId !== state.agentRunId) return;
+
+            renderAgentTrace(current);
+
+        }
+
+        if (current?.status !== 'running') {
+
+            const label = current?.status === 'completed' ? 'Agent complete' : current?.status === 'failed' ? 'Agent failed' : 'Agent stopped';
+
+            const summary = normalizeAssistantText(current?.final_summary || '');
+
+            renderMessage('assistant', `${label}: ${current?.stop_reason || 'No stop reason recorded.'}${summary ? `\n\n${summary}` : ''}`, current?.manual_suggestions || []);
+
+        }
+
+    }
+
+
+
+    async function stopAgent() {
+
+        state.agentStopRequested = true;
+
+        if (!state.agentRunId) return;
+
+        try {
+
+            const run = await fetchJson(`${API_BASE}/api/ai/agent/stop`, {
+
+                method: 'POST',
+
+                headers: { 'Content-Type': 'application/json' },
+
+                body: JSON.stringify({ agent_run_id: state.agentRunId, reason: 'Analyst clicked Stop.' }),
+
+                timeoutMs: aiRequestTimeoutMs(10)
+
+            });
+
+            if (run.agent_run_id !== state.agentRunId) return;
+
+            renderAgentTrace(run);
+
+            renderMessage('assistant', `Stop requested: ${run.stop_reason || 'Agent stopped.'}`);
+
+        } catch (e) {
+
+            renderMessage('assistant', `Stop failed: ${e.message}`);
+
+        }
+
+    }
+
+
+
+    function parseEntityText(text, fallbackId) {
+
+        const raw = String(text || '').trim();
+
+        if (!raw) return null;
+
+        try {
+
+            const parsed = JSON.parse(raw);
+
+            return {
+
+                id: parsed.id || parsed.label || fallbackId,
+
+                label: parsed.label || parsed.id || fallbackId,
+
+                type: parsed.type || 'artifact',
+
+                data: parsed.data || parsed
+
+            };
+
+        } catch (e) {
+
+            return {
+
+                id: fallbackId,
+
+                label: fallbackId,
+
+                type: 'artifact',
+
+                data: { visible_text: raw }
+
+            };
+
+        }
+
+    }
+
+
+
+    async function compareCorrelation() {
+
+        const requestId = ++state.correlationRequestId;
+
+        const current = compactDomContext();
+
+        const otherText = document.getElementById('ai-correlation-input')?.value || '';
+
+        const other = parseEntityText(otherText, 'comparison_entity');
+
+        const button = document.getElementById('ai-correlation-run');
+
+        const resultBox = document.getElementById('ai-correlation-result');
+
+        if (!other) {
+
+            if (resultBox) {
+
+                resultBox.innerHTML = '<div class="ai-agent-empty ai-tool-hint">Paste a second artifact, JSON result, domain, hash, or campaign note first.</div>';
+
+            }
+
+            renderMessage('assistant', 'Paste another artifact, sample summary, JSON result, domain, hash, or campaign note to compare with the current page.');
+
+            return;
+
+        }
+
+        const payload = {
+
+            correlation_id: state.correlation?.correlation_id || '',
+
+            entities: [
+
+                { id: 'current_page', label: current.title || current.page || 'Current AI-MTIP page', type: current.page || 'current', data: current },
+
+                other
+
+            ]
+
+        };
+
+        state.correlationPayload = payload;
+
+        const oldHtml = button?.innerHTML || '';
+
+        if (button) {
+
+            button.disabled = true;
+
+            button.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Comparing...';
+
+        }
+
+        if (resultBox) resultBox.innerHTML = '<div class="ai-tool-loading"><span>Comparing relationship</span><b></b><b></b><b></b></div>';
+
+        try {
+
+            const result = await fetchJson(`${API_BASE}/api/ai/correlation/compare`, {
+
+                method: 'POST',
+
+                headers: { 'Content-Type': 'application/json' },
+
+                body: JSON.stringify(payload),
+
+                timeoutMs: aiRequestTimeoutMs(20)
+
+            });
+
+            if (requestId !== state.correlationRequestId) {
+
+                if (resultBox && /Comparing relationship/i.test(resultBox.textContent || '')) {
+
+                    resultBox.innerHTML = '<div class="ai-agent-empty ai-tool-hint">A newer correlation request replaced this one.</div>';
+
+                }
+
+                return;
+
+            }
+
+            state.correlation = result;
+
+            renderCorrelation(result);
+
+            renderMessage('assistant', correlationSummaryText(result));
+
+        } catch (e) {
+
+            if (requestId !== state.correlationRequestId) return;
+
+            if (resultBox) resultBox.innerHTML = `<div class="ai-agent-empty ai-agent-step-error">${escapeHtml(e.message || 'Correlation failed')}</div>`;
+
+            renderMessage('assistant', `Correlation failed: ${e.message}`);
+
+        } finally {
+
+            if (requestId === state.correlationRequestId && button) {
+
+                button.disabled = false;
+
+                button.innerHTML = oldHtml || '<i class="fa-solid fa-code-compare"></i> Compare Relationship';
+
+            }
+
+        }
+
+    }
+
+
+
+    async function assessAttribution() {
+
+        const requestId = ++state.attributionRequestId;
+
+        const current = compactDomContext();
+
+        const namesText = document.getElementById('ai-attribution-candidates')?.value || '';
+
+        const candidateNames = namesText.split(/[,;\n]/).map(x => x.trim()).filter(Boolean).slice(0, 10);
+
+        const button = document.getElementById('ai-attribution-run');
+
+        const resultBox = document.getElementById('ai-attribution-result');
+
+        const payload = {
+
+            attribution_id: state.attribution?.attribution_id || '',
+
+            activity: {
+
+                id: 'current_activity',
+
+                label: current.title || current.page || 'Current AI-MTIP page',
+
+                type: current.page || 'activity',
+
+                data: current
+
+            },
+
+            candidate_names: candidateNames,
+
+            limit: 10
+
+        };
+
+        state.attributionPayload = payload;
+
+        const oldHtml = button?.innerHTML || '';
+
+        if (button) {
+
+            button.disabled = true;
+
+            button.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Assessing...';
+
+        }
+
+        if (resultBox) {
+
+            resultBox.innerHTML = `<div class="ai-tool-loading"><span>${candidateNames.length ? 'Assessing attribution evidence' : 'Finding candidate actors and malware'}</span><b></b><b></b><b></b></div>`;
+
+        }
+
+        try {
+
+            const result = await fetchJson(`${API_BASE}/api/ai/attribution/assess`, {
+
+                method: 'POST',
+
+                headers: { 'Content-Type': 'application/json' },
+
+                body: JSON.stringify(payload),
+
+                timeoutMs: aiRequestTimeoutMs(20)
+
+            });
+
+            if (requestId !== state.attributionRequestId) {
+
+                if (resultBox && /Assessing attribution|Looking for candidate/i.test(resultBox.textContent || '')) {
+
+                    resultBox.innerHTML = '<div class="ai-agent-empty ai-tool-hint">A newer attribution request replaced this one.</div>';
+
+                }
+
+                return;
+
+            }
+
+            state.attribution = result;
+
+            renderAttribution(result);
+
+            renderMessage('assistant', attributionSummaryText(result));
+
+        } catch (e) {
+
+            if (requestId !== state.attributionRequestId) return;
+
+            if (resultBox) resultBox.innerHTML = `<div class="ai-agent-empty ai-agent-step-error">${escapeHtml(e.message || 'Attribution assessment failed')}</div>`;
+
+            renderMessage('assistant', `Attribution assessment failed: ${e.message}`);
+
+        } finally {
+
+            if (requestId === state.attributionRequestId && button) {
+
+                button.disabled = false;
+
+                button.innerHTML = oldHtml || '<i class="fa-solid fa-scale-balanced"></i> Assess Evidence';
+
+            }
+
+        }
+
+    }
+
+
+
+    function attributionSummaryText(result) {
+
+        const lines = ['Attribution assessment'];
+
+        (result.ranking || []).slice(0, 5).forEach((item, idx) => {
+
+            lines.push(`${idx + 1}. ${item.candidate_name}: ${item.score}/100 ${item.assessment}`);
+
+        });
+
+        lines.push('', result.score_semantics || 'Scores are evidence alignment, not probability.');
+
+        if (result.ai_explanation) lines.push('', result.ai_explanation);
+
+        return lines.filter(Boolean).join('\n');
+
+    }
+
+
+
+    function renderAttribution(result) {
+
+        const box = document.getElementById('ai-attribution-result');
+
+        if (!box) return;
+
+        const ranking = result.ranking || [];
+
+        const top = ranking[0] || null;
+
+        box.innerHTML = `
+
+            <div class="ai-correlation-card ai-tool-result-card">
+
+                <div class="ai-tool-result-head">
+
+                    <div>
+
+                        <div class="ai-tool-result-kicker">Attribution</div>
+
+                        <div class="ai-correlation-title">Evidence Alignment</div>
+
+                    </div>
+
+                    ${top ? `<div class="ai-tool-result-score">${escapeHtml(String(top.score || 0))}<span>/100</span></div>` : ''}
+
+                </div>
+
+                <div class="ai-correlation-reason">${escapeHtml(result.score_semantics || 'Scores are evidence alignment, not probability.')}</div>
+
+                <div class="ai-attribution-list">
+
+                    ${ranking.map(renderAttributionCandidate).join('') || '<div class="ai-agent-empty">No attribution candidates scored.</div>'}
+
+                </div>
+
+            </div>
+
+        `;
+
+    }
+
+
+
+    function renderAttributionCandidate(item, index) {
+
+        const categories = item.categories || {};
+
+        const categoryRows = Object.entries(categories)
+
+            .filter(([category, detail]) => (detail.score || 0) > 0 || ['MALWARE', 'CONFIGURATION', 'PROTOCOL', 'INFRASTRUCTURE', 'DEVELOPER_ARTIFACT'].includes(category))
+
+            .map(([category, detail]) => `
+
+                <div class="ai-score-row">
+
+                    <div class="ai-score-row-top">
+
+                        <span>${escapeHtml(category.replace(/_/g, ' '))}</span>
+
+                        <b>${escapeHtml(String(detail.score || 0))}/${escapeHtml(String(detail.cap || 0))}</b>
+
+                    </div>
+
+                    <div class="ai-score-meter"><span style="width:${Math.max(0, Math.min(100, detail.cap ? Math.round(((detail.score || 0) / detail.cap) * 100) : 0))}%"></span></div>
+
+                </div>
+
+            `).join('');
+
+        const evidence = item.supporting_evidence || [];
+
+        const contradictions = item.contradictions || [];
+
+        const missing = item.missing_evidence || [];
+
+        const claims = item.external_attribution_claims || [];
+
+        return `
+
+            <div class="ai-attribution-candidate ${index === 0 ? 'is-top' : ''}">
+
+                <div class="ai-attribution-rank">
+
+                    <span><em>${index + 1}</em>${escapeHtml(item.candidate_name || '')}</span>
+
+                    <b>${escapeHtml(String(item.score || 0))}<small>/100</small></b>
+
+                </div>
+
+                <div class="ai-attribution-summary">${escapeHtml(item.score_label || 'Attribution Evidence Score')} - ${escapeHtml(item.assessment || '')}</div>
+
+                <div class="ai-score-grid">${categoryRows}</div>
+
+                <details class="ai-evidence-details">
+
+                    <summary>Supporting Evidence (${evidence.length})</summary>
+
+                    <div class="ai-evidence-list">
+
+                        ${evidence.slice(0, 12).map(item => renderEvidenceItem(item, 'attribution')).join('') || '<div class="ai-agent-empty">No scored supporting evidence.</div>'}
+
+                    </div>
+
+                </details>
+
+                ${contradictions.length ? `
+
+                    <details class="ai-evidence-details">
+
+                        <summary>Contradictions (${contradictions.length})</summary>
+
+                        <div class="ai-evidence-list">${contradictions.map(item => renderEvidenceItem(item, 'attribution')).join('')}</div>
+
+                    </details>
+
+                ` : ''}
+
+                ${missing.length ? `<div class="ai-attribution-note"><b>Missing</b>${escapeHtml(missing.slice(0, 3).join(' '))}</div>` : ''}
+
+                ${claims.length ? `<div class="ai-attribution-note"><b>Claims</b>${escapeHtml(claims.map(c => c.source || c.reference || 'source').slice(0, 3).join(', '))}</div>` : ''}
+
+            </div>
+
+        `;
+
+    }
+
+
+
+    function correlationSummaryText(result) {
+
+        const counts = result.counts || {};
+
+        const lines = [
+
+            `Relationship: ${result.relationship || 'UNKNOWN'}`,
+
+            result.assessment_reason || '',
+
+            `Strong: ${counts.STRONG || 0} · Supporting: ${counts.SUPPORTING || 0} · Weak: ${counts.WEAK || 0} · Contradicting: ${counts.CONTRADICTING || 0}`,
+
+        ];
+
+        if (result.cluster_candidate?.suggested) {
+
+            lines.push(`Possible Cluster Relationship: ${result.cluster_candidate.cluster_id}`);
+
+        }
+
+        if (result.ai_explanation) lines.push('', result.ai_explanation);
+
+        return lines.filter(Boolean).join('\n');
+
+    }
+
+
+
+    function renderCorrelation(result) {
+
+        const box = document.getElementById('ai-correlation-result');
+
+        if (!box) return;
+
+        const counts = result.counts || {};
+
+        const evidence = result.evidence || [];
+
+        const ctiRefs = result.cti_references || [];
+
+        const relationship = String(result.relationship || 'UNKNOWN');
+
+        box.innerHTML = `
+
+            <div class="ai-correlation-card ai-tool-result-card">
+
+                <div class="ai-tool-result-head">
+
+                    <div>
+
+                        <div class="ai-tool-result-kicker">Correlation</div>
+
+                        <div class="ai-correlation-title">${escapeHtml(relationship.replace(/_/g, ' '))}</div>
+
+                    </div>
+
+                    <div class="ai-relationship-pill ai-relationship-${escapeHtml(relationship.toLowerCase().replace(/[^a-z0-9]+/g, '-'))}">${escapeHtml(relationship.split(/[_\s-]+/)[0] || 'Result')}</div>
+
+                </div>
+
+                <div class="ai-correlation-reason">${escapeHtml(result.assessment_reason || '')}</div>
+
+                <div class="ai-correlation-counts">
+
+                    <span class="is-strong"><b>${counts.STRONG || 0}</b><small>Strong</small></span>
+
+                    <span class="is-supporting"><b>${counts.SUPPORTING || 0}</b><small>Supporting</small></span>
+
+                    <span class="is-weak"><b>${counts.WEAK || 0}</b><small>Weak</small></span>
+
+                    <span class="is-contradicting"><b>${counts.CONTRADICTING || 0}</b><small>Contradicting</small></span>
+
+                </div>
+
+                ${result.cluster_candidate?.suggested ? `<div class="ai-cluster-pill">Possible Cluster Relationship · ${escapeHtml(result.cluster_candidate.cluster_id)}</div>` : ''}
+
+                <details class="ai-evidence-details" ${evidence.length ? 'open' : ''}>
+
+                    <summary>${evidence.length ? `Evidence (${evidence.length})` : 'Evidence'}</summary>
+
+                    <div class="ai-evidence-list">
+
+                        ${evidence.slice(0, 40).map(item => renderEvidenceItem(item, 'correlation')).join('') || '<div class="ai-agent-empty">No meaningful overlap found.</div>'}
+
+                    </div>
+
+                </details>
+
+                ${ctiRefs.length ? `
+
+                    <details class="ai-evidence-details">
+
+                        <summary>Local CTI References (${ctiRefs.length})</summary>
+
+                        <div class="ai-evidence-list">
+
+                            ${ctiRefs.map(renderCtiReference).join('')}
+
+                        </div>
+
+                    </details>
+
+                ` : ''}
+
+            </div>
+
+        `;
+
+    }
+
+
+
+    function renderCtiReference(ref) {
+
+        const articles = ref.articles || [];
+
+        return `
+
+            <div class="ai-evidence-item">
+
+                <div class="ai-evidence-head">
+
+                    <span>${escapeHtml(ref.artifact || '')}</span>
+
+                    <b>CTI_REFERENCE</b>
+
+                </div>
+
+                <div class="ai-evidence-meta">${escapeHtml(ref.note || '')}</div>
+
+                ${articles.map(article => `
+
+                    <div class="ai-evidence-meta">
+
+                        ${escapeHtml(article.source || 'Local CTI')} - ${escapeHtml(article.title || 'Untitled')}
+
+                        ${article.published ? ` (${escapeHtml(article.published)})` : ''}
+
+                    </div>
+
+                `).join('')}
+
+            </div>
+
+        `;
+
+    }
+
+
+
+    function renderEvidenceItem(item, scope = 'correlation') {
+
+        const sources = (item.sources || []).join(', ');
+
+        const mark = item.analyst_mark ? ` · ${item.analyst_mark}` : '';
+
+        return `
+
+            <div class="ai-evidence-item ai-evidence-${escapeHtml(item.strength || '').toLowerCase()}">
+
+                <div class="ai-evidence-head">
+
+                    <span>${escapeHtml(item.strength || '')}${mark}</span>
+
+                    <b>${escapeHtml(item.category || '')}</b>
+
+                </div>
+
+                <div class="ai-evidence-value">${escapeHtml(item.type || '')}: ${escapeHtml(item.value || '')}</div>
+
+                <div class="ai-evidence-meta">Entities: ${escapeHtml((item.entities || []).join(' ↔ '))}</div>
+
+                <div class="ai-evidence-meta">Sources: ${escapeHtml(sources || 'AI-MTIP')}</div>
+
+                ${item.first_seen || item.last_seen ? `<div class="ai-evidence-meta">Time: ${escapeHtml(item.first_seen || '?')} → ${escapeHtml(item.last_seen || '?')}</div>` : ''}
+
+                <div class="ai-evidence-actions">
+
+                    <button class="btn-secondary ai-evidence-mark" data-evidence-scope="${escapeHtml(scope)}" data-evidence-id="${escapeHtml(item.id)}" data-mark="relevant">Relevant</button>
+
+                    <button class="btn-secondary ai-evidence-mark" data-evidence-scope="${escapeHtml(scope)}" data-evidence-id="${escapeHtml(item.id)}" data-mark="not_relevant">Not Relevant</button>
+
+                    <button class="btn-secondary ai-evidence-mark" data-evidence-scope="${escapeHtml(scope)}" data-evidence-id="${escapeHtml(item.id)}" data-mark="false_positive">False Positive</button>
+
+                </div>
+
+            </div>
+
+        `;
+
+    }
+
+
+
+    async function markEvidence(evidenceId, mark, scope = 'correlation') {
+
+        const isAttribution = scope === 'attribution';
+
+        const runId = isAttribution ? state.attribution?.attribution_id : state.correlation?.correlation_id;
+
+        if (!runId) return;
+
+        const note = mark === 'false_positive' ? (prompt('Optional note for this evidence item:') || '') : '';
+
+        try {
+
+            await fetchJson(`${API_BASE}/api/ai/correlation/mark`, {
+
+                method: 'POST',
+
+                headers: { 'Content-Type': 'application/json' },
+
+                body: JSON.stringify({ correlation_id: runId, evidence_id: evidenceId, mark, note })
+
+            });
+
+            if (isAttribution && state.attributionPayload) {
+
+                const payload = { ...state.attributionPayload, attribution_id: runId };
+
+                state.attributionPayload = payload;
+
+                const result = await fetchJson(`${API_BASE}/api/ai/attribution/assess`, {
+
+                    method: 'POST',
+
+                    headers: { 'Content-Type': 'application/json' },
+
+                    body: JSON.stringify(payload)
+
+                });
+
+                state.attribution = result;
+
+                renderAttribution(result);
+
+            } else if (state.correlationPayload) {
+
+                const payload = { ...state.correlationPayload, correlation_id: runId };
+
+                state.correlationPayload = payload;
+
+                const result = await fetchJson(`${API_BASE}/api/ai/correlation/compare`, {
+
+                    method: 'POST',
+
+                    headers: { 'Content-Type': 'application/json' },
+
+                    body: JSON.stringify(payload)
+
+                });
+
+                state.correlation = result;
+
+                renderCorrelation(result);
+
+            }
+
+        } catch (e) {
+
+            renderMessage('assistant', `Could not mark evidence: ${e.message}`);
+
+        }
+
+    }
+
+
+
+    const DEFAULT_PROVIDERS = [
+
+        { id: 'antigravity', label: 'SSO Antigravity (agy CLI)', endpoint: '', executable_path: 'C:\\Users\\hp\\AppData\\Local\\agy\\bin\\agy.exe', model: 'gemini-3.8-flash-low', api_key_required: false, adapter: 'antigravity' },
+
+        { id: 'chatgpt_desktop', label: 'ChatGPT Desktop / Account (Sign-in)', endpoint: '', model: 'auto', api_key_required: false, adapter: 'chatgpt_account' },
+
+        { id: 'claude_desktop', label: 'Claude Desktop / Claude Code CLI', endpoint: '', model: 'sonnet', api_key_required: false, adapter: 'claude_code' },
+
+        { id: 'deepseek', label: 'DeepSeek', endpoint: 'https://api.deepseek.com/chat/completions', model: 'deepseek-flash', api_key_required: true, adapter: 'openai_compatible' },
+
+        { id: 'anthropic', label: 'Anthropic Claude', endpoint: 'https://api.anthropic.com/v1/messages', model: 'claude-3-5-sonnet-latest', api_key_required: true, adapter: 'anthropic' },
+
+        { id: 'gemini', label: 'Google Gemini', endpoint: 'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent', model: 'gemini-2.5-flash', api_key_required: true, adapter: 'gemini' },
+
+        { id: 'openai', label: 'OpenAI', endpoint: 'https://api.openai.com/v1/chat/completions', model: 'gpt-4o-mini', api_key_required: true, adapter: 'openai_compatible' },
+
+        { id: 'openrouter', label: 'OpenRouter', endpoint: 'https://openrouter.ai/api/v1/chat/completions', model: 'deepseek/deepseek-chat', api_key_required: true, adapter: 'openai_compatible' },
+
+        { id: 'groq', label: 'Groq', endpoint: 'https://api.groq.com/openai/v1/chat/completions', model: 'llama-3.3-70b-versatile', api_key_required: true, adapter: 'openai_compatible' },
+
+        { id: 'together', label: 'Together AI', endpoint: 'https://api.together.xyz/v1/chat/completions', model: 'deepseek-ai/DeepSeek-V3', api_key_required: true, adapter: 'openai_compatible' },
+
+        { id: 'mistral', label: 'Mistral', endpoint: 'https://api.mistral.ai/v1/chat/completions', model: 'mistral-small-latest', api_key_required: true, adapter: 'openai_compatible' },
+
+        { id: 'xai', label: 'xAI', endpoint: 'https://api.x.ai/v1/chat/completions', model: 'grok-2-1212', api_key_required: true, adapter: 'openai_compatible' },
+
+        { id: 'ollama', label: 'Ollama', endpoint: 'http://localhost:11434/api/chat', model: 'llama3.3', api_key_required: false, adapter: 'ollama' },
+
+        { id: 'lmstudio', label: 'LM Studio', endpoint: 'http://localhost:1234/v1/chat/completions', model: 'local-model', api_key_required: false, adapter: 'openai_compatible' },
+
+        { id: 'litellm', label: 'LiteLLM Proxy', endpoint: 'http://localhost:4000/v1/chat/completions', model: 'deepseek-chat', api_key_required: false, adapter: 'openai_compatible' },
+
+        { id: 'copilot', label: 'GitHub Copilot CLI', endpoint: '', model: 'default', api_key_required: false, adapter: 'copilot' },
+
+        { id: 'opencode', label: 'OpenCode CLI', endpoint: '', model: 'default', api_key_required: false, adapter: 'opencode' },
+
+        { id: 'azure_openai', label: 'Azure OpenAI', endpoint: 'https://YOUR-RESOURCE.openai.azure.com/openai/deployments/YOUR-DEPLOYMENT/chat/completions?api-version=2024-06-01', model: 'YOUR-DEPLOYMENT', api_key_required: true, adapter: 'azure_openai' },
+
+        { id: 'openai_compatible', label: 'Custom OpenAI-compatible', endpoint: 'http://localhost:8000/v1/chat/completions', model: 'default', api_key_required: false, adapter: 'openai_compatible' }
+
+    ];
+
+    const PROVIDER_MODELS = {
+        gemini: [
+            'gemini-2.5-flash',
+            'gemini-2.5-pro',
+            'gemini-2.0-flash',
+            'gemini-2.0-flash-lite',
+            'gemini-1.5-flash',
+            'gemini-1.5-pro'
+        ],
+        openai: [
+            'gpt-4o-mini',
+            'gpt-4o',
+            'o3-mini',
+            'o1',
+            'o1-mini',
+            'gpt-4-turbo'
+        ],
+        anthropic: [
+            'claude-3-7-sonnet-20250219',
+            'claude-3-5-sonnet-20241022',
+            'claude-3-5-haiku-20241022',
+            'claude-3-opus-20240229'
+        ],
+        deepseek: [
+            'deepseek-flash',
+            'deepseek-v4-pro',
+            'deepseek-chat',
+            'deepseek-reasoner'
+        ],
+        groq: [
+            'llama-3.3-70b-versatile',
+            'llama-3.1-8b-instant',
+            'deepseek-r1-distill-llama-70b',
+            'qwen-2.5-32b',
+            'mixtral-8x7b-32768'
+        ],
+        openrouter: [
+            'deepseek/deepseek-flash',
+            'deepseek/deepseek-v4-pro',
+            'deepseek/deepseek-r1',
+            'deepseek/deepseek-chat',
+            'anthropic/claude-3.5-sonnet',
+            'google/gemini-2.5-flash',
+            'meta-llama/llama-3.3-70b-instruct'
+        ],
+        together: [
+            'deepseek-ai/DeepSeek-R1',
+            'deepseek-ai/DeepSeek-V3',
+            'meta-llama/Llama-3.3-70B-Instruct-Turbo',
+            'meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo',
+            'Qwen/Qwen2.5-72B-Instruct-Turbo'
+        ],
+        mistral: [
+            'mistral-large-latest',
+            'mistral-small-latest',
+            'codestral-latest',
+            'ministral-8b-latest'
+        ],
+        xai: [
+            'grok-2-1212',
+            'grok-2-vision-1212',
+            'grok-beta'
+        ],
+        ollama: [
+            'llama3.3',
+            'llama3.2',
+            'deepseek-r1',
+            'deepseek-r1:14b',
+            'deepseek-r1:8b',
+            'qwen2.5-coder',
+            'mistral'
+        ],
+        lmstudio: [
+            'local-model',
+            'deepseek-r1',
+            'llama-3.3-70b-instruct',
+            'qwen2.5-coder'
+        ],
+        litellm: [
+            'deepseek-chat',
+            'claude-3-5-sonnet',
+            'gemini-2.5-flash',
+            'llama-3.3-70b'
+        ],
+        antigravity: [
+            'gemini-3.8-flash-low',
+            'gemini-3.8-flash-medium',
+            'gemini-3.8-pro',
+            'claude-sonnet-4-6',
+            'default'
+        ],
+        chatgpt_desktop: [
+            'auto',
+            'gpt-4o',
+            'gpt-4o-mini'
+        ],
+        claude_desktop: [
+            'sonnet',
+            'opus',
+            'haiku',
+            'default'
+        ],
+        copilot: [
+            'default',
+            'claude-3.5-sonnet',
+            'gpt-4o'
+        ],
+        opencode: [
+            'default',
+            'claude-3.5-sonnet',
+            'deepseek-chat'
+        ],
+        azure_openai: [
+            'YOUR-DEPLOYMENT',
+            'gpt-4o',
+            'gpt-4o-mini'
+        ],
+        openai_compatible: [
+            'deepseek-ai/DeepSeek-V3',
+            'deepseek-ai/DeepSeek-R1',
+            'meta-llama/Llama-3.3-70B-Instruct',
+            'Qwen/Qwen2.5-72B-Instruct',
+            'mistralai/Mistral-Small-24B-Instruct-2501',
+            'default'
+        ]
+    };
+
+    function getModelsForProvider(providerId) {
+        if (PROVIDER_MODELS[providerId]) {
+            return PROVIDER_MODELS[providerId];
+        }
+        const meta = getProvidersList().find(p => p.id === providerId);
+        if (meta && meta.model) {
+            return [meta.model];
+        }
+        return ['default'];
+    }
+
+    function updateModelSuggestions(providerId, selectedModel) {
+        const pId = providerId || document.getElementById('ai-provider')?.value || 'openai_compatible';
+        const models = getModelsForProvider(pId);
+        const modelInput = document.getElementById('ai-model');
+        const curVal = selectedModel || modelInput?.value || models[0] || '';
+
+        // Update datalist options for native autocomplete dropdown
+        const datalist = document.getElementById('ai-model-datalist');
+        if (datalist) {
+            datalist.innerHTML = models.map(m => `<option value="${aiEsc(m)}"></option>`).join('');
+        }
+
+        // Update interactive quick-pick pills
+        const pillsContainer = document.getElementById('ai-model-pills');
+        if (pillsContainer) {
+            pillsContainer.innerHTML = models.slice(0, 6).map(m => {
+                const isActive = m === curVal;
+                return `<button type="button" class="ai-model-pill ${isActive ? 'active' : ''}" data-model="${aiEsc(m)}">${aiEsc(m)}</button>`;
+            }).join('');
+
+            pillsContainer.querySelectorAll('.ai-model-pill').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    const m = btn.dataset.model;
+                    if (modelInput) {
+                        modelInput.value = m;
+                        modelInput.dispatchEvent(new Event('input'));
+                    }
+                    pillsContainer.querySelectorAll('.ai-model-pill').forEach(b => b.classList.remove('active'));
+                    btn.classList.add('active');
+                });
+            });
+        }
+    }
+
+
+
+    function getProvidersList() {
+
+        if (Array.isArray(state.settings?.providers) && state.settings.providers.length > 0) {
+
+            return state.settings.providers;
+
+        }
+
+        return DEFAULT_PROVIDERS;
+
+    }
+
+
+
+    let activeAiCategory = 'api_key';
+
+    function getCategoryForProvider(providerId) {
+        if (['antigravity', 'chatgpt_desktop', 'claude_desktop', 'copilot', 'opencode'].includes(providerId)) {
+            return 'cli_sso';
+        }
+        if (['ollama', 'lmstudio', 'litellm'].includes(providerId)) {
+            return 'local';
+        }
+        const meta = getProvidersList().find(p => p.id === providerId);
+        if (meta) {
+            if (['antigravity', 'claude_code', 'chatgpt_account', 'cli', 'opencode', 'copilot'].includes(meta.adapter)) {
+                return 'cli_sso';
+            }
+            if (meta.adapter === 'ollama') {
+                return 'local';
+            }
+        }
+        return 'api_key';
+    }
+
+    function renderProviderOptions(selectedId) {
+
+        const select = document.getElementById('ai-provider');
+
+        if (!select) return;
+
+        const allProviders = getProvidersList();
+
+        // If selectedId provided, sync activeAiCategory
+        if (selectedId) {
+            activeAiCategory = getCategoryForProvider(selectedId);
+        }
+
+        // Filter providers by activeAiCategory
+        const filteredProviders = allProviders.filter(p => getCategoryForProvider(p.id) === activeAiCategory);
+
+        select.innerHTML = filteredProviders.map(p => {
+            return `<option value="${aiEsc(p.id)}">${aiEsc(p.label)}</option>`;
+        }).join('');
+
+        const curVal = selectedId || select.value;
+        if (curVal && filteredProviders.some(p => p.id === curVal)) {
+            select.value = curVal;
+        } else if (filteredProviders.length > 0) {
+            select.value = filteredProviders[0].id;
+        }
+
+        // Sync category pills in UI
+        const catTabs = document.getElementById('ai-category-tabs');
+        if (catTabs) {
+            catTabs.querySelectorAll('.ai-category-pill').forEach(btn => {
+                btn.classList.toggle('active', btn.dataset.category === activeAiCategory);
+            });
+        }
+
+    }
+
+
+
+    async function loadSettings() {
+
+        try {
+
+            state.settings = await fetchJson(`${API_BASE}/api/ai/settings`);
+
+            // Client-side backup sync: if server has no key but client stored one, auto-sync
+            if (!state.settings?.available) {
+                const localKey = localStorage.getItem('mtip_ai_key');
+                if (localKey && localKey !== '********') {
+                    const localProv = localStorage.getItem('mtip_ai_provider') || 'deepseek';
+                    const localModel = localStorage.getItem('mtip_ai_model') || '';
+                    const localEndpoint = localStorage.getItem('mtip_ai_endpoint') || '';
+                    try {
+                        state.settings = await fetchJson(`${API_BASE}/api/ai/settings`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                enabled: true,
+                                provider: localProv,
+                                endpoint: localEndpoint,
+                                model: localModel,
+                                api_key: localKey
+                            })
+                        });
+                    } catch {}
+                }
+            }
+
+            hydrateSettingsForm();
+
+            const status = document.getElementById('ai-status');
+
+            if (status) status.textContent = state.settings.available ? 'Ready' : 'Not configured';
+
+            updateStatusBadge();
+
+        } catch (e) {
+
+            state.settings = { available: false };
+
+            const status = document.getElementById('ai-status');
+
+            if (status) status.textContent = 'Not configured';
+
+            updateStatusBadge();
+
+        }
+
+    }
+
+
+
+    function updateStatusBadge() {
+        const pill = document.getElementById('ai-status-pill');
+        if (!pill) return;
+        const isReady = Boolean(state.settings?.available);
+        if (isReady) {
+            pill.className = 'free-card-count';
+            pill.style.borderColor = '';
+            pill.style.color = '';
+            pill.style.background = '';
+            const provName = state.settings.provider_label || state.settings.provider || 'Ready';
+            const modelName = state.settings.model || '';
+            pill.innerHTML = `<i class="fa-solid fa-circle-check" style="font-size: 10px; margin-right: 4px;"></i> AI Engine Ready (${escapeHtml(provName)}${modelName ? ' - ' + escapeHtml(modelName) : ''})`;
+            const statusBox = document.getElementById('ai-settings-status');
+            if (statusBox && !statusBox.classList.contains('testing')) {
+                statusBox.className = 'ai-status-container success';
+                statusBox.innerHTML = `<i class="fa-solid fa-circle-check"></i> Ready (${escapeHtml(provName)}${modelName ? ' - ' + escapeHtml(modelName) : ''})`;
+            }
+        } else {
+            pill.className = 'free-card-count';
+            pill.style.borderColor = 'rgba(255,255,255,0.15)';
+            pill.style.color = '#94a3b8';
+            pill.style.background = 'rgba(255,255,255,0.05)';
+            pill.innerHTML = '<i class="fa-solid fa-circle-exclamation" style="font-size: 10px; margin-right: 4px;"></i> Not Configured';
+        }
+    }
+
+
+
+    function hydrateSettingsForm() {
+
+        const s = state.settings || {};
+
+        renderProviderOptions(s.provider || 'openai_compatible');
+
+        const map = {
+
+            'ai-provider': s.provider || 'openai_compatible',
+
+            'ai-endpoint': s.endpoint || '',
+
+            'ai-exe-path': s.provider === 'chatgpt_desktop' ? '' : (s.executable_path || (!s.endpoint?.startsWith('http') ? s.endpoint : '') || ''),
+
+            'ai-model': s.model || '',
+
+            'ai-key': s.api_key || '',
+
+            'ai-timeout': s.timeout_seconds || 30,
+
+            'ai-max-tokens': s.max_output_tokens || 2200
+
+        };
+
+        Object.entries(map).forEach(([id, value]) => {
+
+            const input = document.getElementById(id);
+
+            if (!input) return;
+
+            if (input.type === 'checkbox') input.checked = !!value;
+
+            else input.value = value;
+
+        });
+
+        const keyInput = document.getElementById('ai-key');
+        if (keyInput) keyInput.dataset.clearApiKey = 'false';
+
+        updateProviderHint();
+        updateModelSuggestions(s.provider || 'openai_compatible', s.model || '');
+        updateStatusBadge();
+
+    }
+
+
+
+    function selectedProviderMeta() {
+
+        const id = document.getElementById('ai-provider')?.value || state.settings?.provider || 'openai_compatible';
+
+        const providers = getProvidersList();
+
+        return providers.find(p => p.id === id) || null;
+
+    }
+
+
+
+    async function checkChatGPTOAuthStatus() {
+        const badge = document.getElementById('chatgpt-sso-badge');
+        const signinBtn = document.getElementById('ai-btn-chatgpt-signin');
+        const signoutBtn = document.getElementById('ai-btn-chatgpt-signout');
+        if (!badge) return;
+        try {
+            const data = await fetchJson(`${API_BASE}/api/ai/sso/status?provider=chatgpt_desktop`);
+            if (data?.signed_in) {
+                const userEmail = data.email || 'Active Account';
+                badge.className = 'ai-sso-badge signed-in';
+                badge.innerHTML = `<i class="fa-solid fa-circle-check"></i> Signed in as <strong>${aiEsc(userEmail)}</strong>`;
+                if (signinBtn) signinBtn.style.display = 'none';
+                if (signoutBtn) signoutBtn.style.display = 'inline-flex';
+            } else {
+                badge.className = 'ai-sso-badge not-signed-in';
+                badge.innerHTML = `<i class="fa-solid fa-circle-question"></i> Not signed in to ChatGPT Account`;
+                if (signinBtn) {
+                    signinBtn.style.display = 'inline-flex';
+                    signinBtn.disabled = false;
+                    signinBtn.innerHTML = '<i class="fa-solid fa-arrow-right-to-bracket"></i> Sign In with ChatGPT';
+                }
+                if (signoutBtn) signoutBtn.style.display = 'none';
+            }
+        } catch {
+            badge.className = 'ai-sso-badge not-signed-in';
+            badge.innerHTML = `<i class="fa-solid fa-circle-question"></i> Not signed in to ChatGPT Account`;
+        }
+    }
+
+    async function startChatGPTSignIn() {
+        const signinBtn = document.getElementById('ai-btn-chatgpt-signin');
+        const badge = document.getElementById('chatgpt-sso-badge');
+        if (signinBtn) {
+            signinBtn.disabled = true;
+            signinBtn.innerHTML = '<i class="fa-solid fa-circle-notch mtip-spin"></i> Authorizing in browser...';
+        }
+        if (badge) {
+            badge.className = 'ai-sso-badge not-signed-in';
+            badge.innerHTML = '<i class="fa-solid fa-circle-notch mtip-spin"></i> Complete sign-in in your browser...';
+        }
+        try {
+            const res = await fetchJson(`${API_BASE}/api/ai/sso/signin`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ provider: 'chatgpt_desktop' })
+            });
+            if (res?.ok) {
+                notify('Successfully signed in to ChatGPT Account!');
+                await checkChatGPTOAuthStatus();
+                await saveSettings();
+            } else {
+                notify('Sign-in failed: ' + (res?.error || 'Unknown error'));
+                await checkChatGPTOAuthStatus();
+            }
+        } catch (e) {
+            notify('Sign-in error: ' + (e.message || 'Failed'));
+            await checkChatGPTOAuthStatus();
+        }
+    }
+
+    async function startChatGPTSignOut() {
+        try {
+            await fetchJson(`${API_BASE}/api/ai/sso/signout`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ provider: 'chatgpt_desktop' })
+            });
+            notify('Signed out of ChatGPT Account.');
+            await checkChatGPTOAuthStatus();
+        } catch (e) {
+            notify('Sign-out error: ' + (e.message || 'Failed'));
+        }
+    }
+
+    async function validateCliExePath(providerId, pathValue) {
+        const pill = document.getElementById('ai-exe-status-pill');
+        if (!pill) return;
+        const pId = providerId || document.getElementById('ai-provider')?.value;
+        const val = (pathValue !== undefined ? pathValue : document.getElementById('ai-exe-path')?.value || '').trim();
+        if (!val) {
+            pill.innerHTML = '';
+            return;
+        }
+        try {
+            const res = await fetchJson(`${API_BASE}/api/ai/detect-exe?provider=${encodeURIComponent(pId)}`);
+            if (res?.found && (res.path.toLowerCase() === val.toLowerCase() || val === 'agy' || val === 'claude')) {
+                pill.className = 'ai-path-status-badge valid';
+                pill.innerHTML = `<i class="fa-solid fa-circle-check"></i> Executable detected: <code>${aiEsc(res.path)}</code>`;
+            } else {
+                pill.className = 'ai-path-status-badge valid';
+                pill.innerHTML = `<i class="fa-solid fa-terminal"></i> Configured path: <code>${aiEsc(val)}</code>`;
+            }
+        } catch {
+            pill.innerHTML = '';
+        }
+    }
+
+    function updateProviderHint() {
+
+        const meta = selectedProviderMeta();
+
+        if (!meta) return;
+
+        const isCli = ['antigravity', 'claude_code', 'chatgpt_account', 'cli', 'opencode', 'copilot'].includes(meta.adapter);
+        const isChatGPT = meta.id === 'chatgpt_desktop' || meta.adapter === 'chatgpt_account';
+
+        const endpointRow = document.getElementById('ai-field-endpoint-row');
+        const cliRow = document.getElementById('ai-field-cli-row');
+        const chatgptRow = document.getElementById('ai-field-chatgpt-sso-row');
+        const exeInput = document.getElementById('ai-exe-path');
+
+        if (isChatGPT) {
+            if (endpointRow) endpointRow.style.display = 'none';
+            if (cliRow) cliRow.style.display = 'none';
+            if (chatgptRow) chatgptRow.style.display = 'grid';
+            checkChatGPTOAuthStatus();
+        } else if (isCli) {
+            if (endpointRow) endpointRow.style.display = 'none';
+            if (chatgptRow) chatgptRow.style.display = 'none';
+            if (cliRow) cliRow.style.display = 'grid';
+
+            if (meta.id === 'antigravity') {
+                if (exeInput && !exeInput.value) exeInput.value = meta.detected_executable_path || meta.executable_path || 'C:\\Users\\hp\\AppData\\Local\\agy\\bin\\agy.exe';
+                if (exeInput) exeInput.placeholder = 'e.g. C:\\Users\\hp\\AppData\\Local\\agy\\bin\\agy.exe or agy';
+            } else if (meta.id === 'claude_desktop') {
+                if (exeInput && !exeInput.value && (meta.detected_executable_path || meta.executable_path)) exeInput.value = meta.detected_executable_path || meta.executable_path;
+                if (exeInput) exeInput.placeholder = 'e.g. C:\\Users\\hp\\AppData\\Roaming\\npm\\claude.cmd or claude';
+            } else if (meta.id === 'copilot') {
+                if (exeInput && !exeInput.value && (meta.detected_executable_path || meta.executable_path)) exeInput.value = meta.detected_executable_path || meta.executable_path;
+                if (exeInput) exeInput.placeholder = 'e.g. C:\\Program Files\\GitHub CLI\\gh.exe or copilot';
+            } else {
+                if (exeInput && !exeInput.value && (meta.detected_executable_path || meta.executable_path)) exeInput.value = meta.detected_executable_path || meta.executable_path;
+                if (exeInput) exeInput.placeholder = 'e.g. path/to/application.exe or command';
+            }
+            validateCliExePath(meta.id, exeInput?.value);
+        } else {
+            if (endpointRow) endpointRow.style.display = 'grid';
+            if (cliRow) cliRow.style.display = 'none';
+            if (chatgptRow) chatgptRow.style.display = 'none';
+        }
+
+        const keyText = meta.api_key_required ? 'API key required' : (isCli ? 'Uses local CLI / signed-in session (No API key needed)' : 'API key optional / local');
+
+        const hint = document.getElementById('ai-provider-hint');
+        if (hint) {
+            hint.innerHTML = `<i class="fa-solid fa-circle-info"></i> <div><strong>${aiEsc(meta.label)}</strong> uses the <code>${aiEsc(meta.adapter || 'openai_compatible')}</code> adapter. ${aiEsc(keyText)}.</div>`;
+        }
+
+        const keyInput = document.getElementById('ai-key');
+
+        if (keyInput) {
+
+            keyInput.placeholder = meta.api_key_required ? 'Stored server-side only' : 'Optional for this provider';
+
+            keyInput.disabled = false;
+
+        }
+
+        const endpointInput = document.getElementById('ai-endpoint');
+
+        if (endpointInput) {
+
+            endpointInput.placeholder = 'https://api.example.com/v1/chat/completions';
+
+            endpointInput.disabled = false;
+
+        }
+
+    }
+
+
+
+    function applyProviderPreset() {
+
+        const meta = selectedProviderMeta();
+
+        if (!meta) return;
+
+        const isCli = ['antigravity', 'claude_code', 'chatgpt_account', 'cli', 'opencode', 'copilot'].includes(meta.adapter);
+        const isChatGPT = meta.id === 'chatgpt_desktop' || meta.adapter === 'chatgpt_account';
+
+        const endpointInput = document.getElementById('ai-endpoint');
+
+        const modelInput = document.getElementById('ai-model');
+
+        const exeInput = document.getElementById('ai-exe-path');
+
+        if (endpointInput) endpointInput.value = meta.endpoint || '';
+
+        if (modelInput) modelInput.value = meta.model || '';
+
+        if (isChatGPT) {
+            if (exeInput) exeInput.value = '';
+        } else if (isCli && exeInput) {
+            exeInput.value = meta.detected_executable_path || meta.executable_path || '';
+        }
+
+        updateProviderHint();
+
+        updateModelSuggestions(meta.id, meta.model);
+
+    }
+
+
+
+    async function saveSettings() {
+
+        const keyInput = document.getElementById('ai-key');
+        const apiKey = keyInput?.value?.trim() || '';
+        const exeInput = document.getElementById('ai-exe-path');
+        const exePath = exeInput?.value?.trim() || '';
+        const meta = selectedProviderMeta();
+        const isCli = ['antigravity', 'claude_code', 'chatgpt_account', 'cli', 'opencode', 'copilot'].includes(meta?.adapter);
+        const isChatGPT = meta?.id === 'chatgpt_desktop' || meta?.adapter === 'chatgpt_account';
+        const isExplicitClear = keyInput?.dataset.clearApiKey === 'true';
+
+        const payload = {
+
+            enabled: true,
+
+            provider: document.getElementById('ai-provider')?.value || 'openai_compatible',
+
+            endpoint: isChatGPT ? '' : (isCli ? exePath : (document.getElementById('ai-endpoint')?.value?.trim() || '')),
+
+            executable_path: isChatGPT ? '' : exePath,
+
+            model: document.getElementById('ai-model')?.value?.trim() || '',
+
+            api_key: apiKey,
+
+            clear_api_key: isExplicitClear,
+
+            timeout_seconds: Number(document.getElementById('ai-timeout')?.value || 30),
+
+            max_output_tokens: Number(document.getElementById('ai-max-tokens')?.value || 2200)
+
+        };
+
+        state.settings = await fetchJson(`${API_BASE}/api/ai/settings`, {
+
+            method: 'POST',
+
+            headers: { 'Content-Type': 'application/json' },
+
+            body: JSON.stringify(payload)
+
+        });
+
+        // Backup to localStorage for cross-session/reconnection safety
+        if (apiKey && apiKey !== '********') {
+            localStorage.setItem('mtip_ai_key', apiKey);
+        } else if (isExplicitClear) {
+            localStorage.removeItem('mtip_ai_key');
+        }
+        localStorage.setItem('mtip_ai_provider', payload.provider);
+        localStorage.setItem('mtip_ai_model', payload.model);
+        if (payload.endpoint) localStorage.setItem('mtip_ai_endpoint', payload.endpoint);
+
+        // Also save to personal vault if authenticated in Team Server
+        if (apiKey && apiKey !== '********' && window.MtipAuth?.savePersonalKey) {
+            window.MtipAuth.savePersonalKey('ai', apiKey).catch(() => {});
+            window.MtipAuth.savePersonalKey(payload.provider, apiKey).catch(() => {});
+        }
+
+        hydrateSettingsForm();
+
+        const box = document.getElementById('ai-settings-status');
+        if (box) {
+            box.className = 'ai-status-container success';
+            box.innerHTML = '<i class="fa-solid fa-circle-check"></i> Settings Saved';
+            setTimeout(() => { if (box && box.classList.contains('success')) box.innerHTML = ''; }, 3500);
+        }
+
+        notify('MTIP AI settings saved');
+        return state.settings;
+
+    }
+
+
+
+    async function testConnection() {
+
+        const box = document.getElementById('ai-settings-status');
+
+        if (box) {
+            box.className = 'ai-status-container testing';
+            box.innerHTML = '<i class="fa-solid fa-circle-notch mtip-spin"></i> Testing connection...';
+        }
+
+        try {
+
+            const keyInput = document.getElementById('ai-key');
+            const exeInput = document.getElementById('ai-exe-path');
+            const exePath = exeInput?.value?.trim() || '';
+            const meta = selectedProviderMeta();
+            const isCli = ['antigravity', 'claude_code', 'chatgpt_account', 'cli', 'opencode', 'copilot'].includes(meta?.adapter);
+            const isChatGPT = meta?.id === 'chatgpt_desktop' || meta?.adapter === 'chatgpt_account';
+
+            await fetchJson(`${API_BASE}/api/ai/test`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    provider: document.getElementById('ai-provider')?.value || 'openai_compatible',
+                    endpoint: isChatGPT ? '' : (isCli ? exePath : (document.getElementById('ai-endpoint')?.value?.trim() || '')),
+                    executable_path: isChatGPT ? '' : exePath,
+                    model: document.getElementById('ai-model')?.value?.trim() || '',
+                    api_key: keyInput?.value?.trim() || '',
+                    clear_api_key: keyInput?.dataset.clearApiKey === 'true',
+                    timeout_seconds: Number(document.getElementById('ai-timeout')?.value || 30),
+                    max_output_tokens: Number(document.getElementById('ai-max-tokens')?.value || 2200)
+                })
+            });
+
+            // Auto-persist verified configuration so testing automatically saves it to server/workstation!
+            await saveSettings();
+
+            if (box) {
+                box.className = 'ai-status-container success';
+                box.innerHTML = '<i class="fa-solid fa-circle-check"></i> Connection Verified &amp; Saved (Ready)';
+            }
+            notify('MTIP AI connection verified & settings saved!');
+            updateStatusBadge();
+
+        } catch (e) {
+
+            if (box) {
+                box.className = 'ai-status-container error';
+                box.innerHTML = `<i class="fa-solid fa-triangle-exclamation"></i> ${aiEsc(e.message || 'Connection failed')}`;
+            }
+            notify('Connection test failed: ' + (e.message || 'Error'));
+
+        }
+
+    }
+
+
+
+    function injectSettings() {
+
+        const settings = document.getElementById('settings-ai-mount') || document.getElementById('settings-view');
+
+        if (!settings || document.getElementById('mtip-ai-settings')) return;
+
+        settings.innerHTML = `
+            <div class="settings-free-card">
+                <div class="free-card-header">
+                    <div class="free-card-title">
+                        <i class="fa-solid fa-wand-magic-sparkles"></i>
+                        <div>
+                            <h4>MTIP AI Engine</h4>
+                            <p>Configure local LLMs, cloud models, or signed-in CLI sessions for automated intelligence synthesis, IOC extraction, and MITRE ATT&CK mapping</p>
+                        </div>
+                    </div>
+                    <span id="ai-status-pill" class="free-card-count">
+                        <i class="fa-solid fa-circle-check" style="font-size: 10px; margin-right: 4px;"></i> Not configured
+                    </span>
+                </div>
+                <div class="free-sources-chips">
+                    <div class="free-source-pill"><i class="fa-solid fa-terminal"></i> Antigravity (agy CLI)</div>
+                    <div class="free-source-pill"><i class="fa-solid fa-cube"></i> Ollama / Local Models</div>
+                    <div class="free-source-pill"><i class="fa-solid fa-bolt"></i> OpenAI / DeepSeek / Groq</div>
+                    <div class="free-source-pill"><i class="fa-solid fa-brain"></i> Anthropic Claude</div>
+                    <div class="free-source-pill"><i class="fa-brands fa-google"></i> Google Gemini</div>
+                    <div class="free-source-pill"><i class="fa-solid fa-microchip"></i> LiteLLM / LM Studio</div>
+                </div>
+            </div>
+
+            <div id="mtip-ai-settings" class="ai-settings-card">
+                <div class="ai-settings-card-header">
+                    <div class="ai-settings-card-title">
+                        <i class="fa-solid fa-sliders"></i>
+                        <div>
+                            <h4>Provider & Model Configuration</h4>
+                            <p>Configure inference backend, endpoint URL, credentials, and query constraints</p>
+                        </div>
+                    </div>
+                    <div id="ai-settings-status" class="ai-status-container"></div>
+                </div>
+
+                <div class="ai-config-sections">
+                    <!-- Step 0: Provider Category Selection -->
+                    <div class="ai-field">
+                        <label>Provider Category</label>
+                        <div class="ai-category-pills" id="ai-category-tabs">
+                            <button type="button" class="ai-category-pill active" data-category="api_key">
+                                <i class="fa-solid fa-key"></i> API Key Based
+                            </button>
+                            <button type="button" class="ai-category-pill" data-category="local">
+                                <i class="fa-solid fa-server"></i> Local-Hosted LLM
+                            </button>
+                            <button type="button" class="ai-category-pill" data-category="cli_sso">
+                                <i class="fa-solid fa-terminal"></i> CLI / Desktop App SSO
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Section 1: Provider & Model -->
+                    <div class="ai-field-group">
+                        <div class="ai-field">
+                            <label for="ai-provider">LLM Provider / Adapter</label>
+                            <select id="ai-provider"></select>
+                        </div>
+                        <div class="ai-field">
+                            <label for="ai-model">Model Identifier</label>
+                            <div class="ai-model-wrapper">
+                                <input type="text" id="ai-model" list="ai-model-datalist" placeholder="Select or enter model (e.g. gemini-2.5-flash)" class="ai-mono-input" autocomplete="off">
+                                <datalist id="ai-model-datalist"></datalist>
+                                <div id="ai-model-pills" class="ai-model-pills"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Section 2: Endpoint & API Key -->
+                    <div class="ai-field-group" id="ai-field-endpoint-row">
+                        <div class="ai-field">
+                            <label for="ai-endpoint">API Endpoint URL</label>
+                            <input type="text" id="ai-endpoint" placeholder="https://api.openai.com/v1/chat/completions" class="ai-mono-input">
+                        </div>
+                        <div class="ai-field">
+                            <label for="ai-key">API Key / Access Token</label>
+                            <div class="api-input-wrapper">
+                                <input type="password" id="ai-key" placeholder="Stored server-side only" autocomplete="off" class="ai-mono-input">
+                                <button type="button" class="btn-toggle-key-mask" id="btn-toggle-ai-key-mask" title="Show / Hide API Key">
+                                    <i class="fa-solid fa-eye"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Section 2B: Application / Executable Path (CLI & Desktop Apps) -->
+                    <div class="ai-field-group" id="ai-field-cli-row" style="display: none;">
+                        <div class="ai-field" style="grid-column: span 2;">
+                            <label for="ai-exe-path"><i class="fa-solid fa-terminal"></i> Application / CLI Executable Path (.exe / .cmd)</label>
+                            <div class="ai-path-wrapper">
+                                <input type="text" id="ai-exe-path" placeholder="e.g. C:\Users\hp\AppData\Local\agy\bin\agy.exe or 'agy'" class="ai-mono-input" autocomplete="off">
+                                <input type="file" id="ai-exe-file-input" accept=".exe,.cmd,.bat,.bin,*" style="display: none;">
+                                <button type="button" class="btn-secondary ai-path-btn" id="ai-btn-browse-exe" title="Browse for application .exe or .cmd file">
+                                    <i class="fa-solid fa-folder-open"></i> Browse...
+                                </button>
+                            </div>
+                            <div id="ai-exe-status-pill"></div>
+                        </div>
+                    </div>
+
+                    <!-- Section 2C: ChatGPT Account Desktop SSO -->
+                    <div class="ai-field-group" id="ai-field-chatgpt-sso-row" style="display: none;">
+                        <div class="ai-field" style="grid-column: span 2;">
+                            <label><i class="fa-solid fa-user-shield"></i> ChatGPT Account Session & SSO</label>
+                            <div class="ai-sso-card">
+                                <div class="ai-sso-status">
+                                    <span id="chatgpt-sso-badge" class="ai-sso-badge not-signed-in">
+                                        <i class="fa-solid fa-circle-question"></i> Not signed in to ChatGPT Account
+                                    </span>
+                                </div>
+                                <div class="ai-sso-actions">
+                                    <button type="button" class="btn-primary ai-path-btn" id="ai-btn-chatgpt-signin">
+                                        <i class="fa-solid fa-arrow-right-to-bracket"></i> Sign In with ChatGPT
+                                    </button>
+                                    <button type="button" class="btn-secondary ai-path-btn" id="ai-btn-chatgpt-signout" style="display: none;">
+                                        <i class="fa-solid fa-arrow-right-from-bracket"></i> Sign Out
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Section 3: Limits -->
+                    <div class="ai-field-group ai-field-group-narrow">
+                        <div class="ai-field">
+                            <label for="ai-timeout"><i class="fa-solid fa-stopwatch"></i> Request Timeout (seconds)</label>
+                            <input type="number" id="ai-timeout" min="5" max="180" step="1" placeholder="30">
+                        </div>
+                        <div class="ai-field">
+                            <label for="ai-max-tokens"><i class="fa-solid fa-coins"></i> Max Output Tokens</label>
+                            <input type="number" id="ai-max-tokens" min="128" max="16000" step="128" placeholder="2200">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Action Bar -->
+                <div class="ai-settings-actions">
+                    <button type="button" id="ai-save-settings" class="btn-primary"><i class="fa-solid fa-floppy-disk"></i> Save AI Settings</button>
+                    <button type="button" id="ai-test-settings" class="btn-secondary"><i class="fa-solid fa-plug-circle-check"></i> Test Connection</button>
+                    <button type="button" id="ai-clear-key" class="btn-secondary"><i class="fa-solid fa-trash-can"></i> Clear Stored Key</button>
+                </div>
+            </div>
+        `;
+
+        renderProviderOptions();
+
+        const catTabs = document.getElementById('ai-category-tabs');
+        if (catTabs) {
+            catTabs.querySelectorAll('.ai-category-pill').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const cat = btn.dataset.category;
+                    if (cat === activeAiCategory) return;
+                    activeAiCategory = cat;
+                    catTabs.querySelectorAll('.ai-category-pill').forEach(b => b.classList.remove('active'));
+                    btn.classList.add('active');
+
+                    renderProviderOptions();
+                    applyProviderPreset();
+                });
+            });
+        }
+
+        document.getElementById('ai-provider')?.addEventListener('change', applyProviderPreset);
+
+        document.getElementById('ai-model')?.addEventListener('input', (e) => {
+            const val = e.target.value.trim();
+            const pillsContainer = document.getElementById('ai-model-pills');
+            if (pillsContainer) {
+                pillsContainer.querySelectorAll('.ai-model-pill').forEach(btn => {
+                    btn.classList.toggle('active', btn.dataset.model === val);
+                });
+            }
+        });
+
+        document.getElementById('ai-save-settings')?.addEventListener('click', () => saveSettings().catch(e => {
+
+            const box = document.getElementById('ai-settings-status');
+
+            if (box) {
+                box.className = 'ai-status-container error';
+                box.innerHTML = `<i class="fa-solid fa-triangle-exclamation"></i> ${aiEsc(e.message || 'Save failed')}`;
+            }
+
+        }));
+
+        document.getElementById('ai-test-settings')?.addEventListener('click', testConnection);
+
+        document.getElementById('ai-clear-key')?.addEventListener('click', () => {
+            const keyInput = document.getElementById('ai-key');
+            if (!keyInput) return;
+            keyInput.value = '';
+            keyInput.dataset.clearApiKey = 'true';
+            const box = document.getElementById('ai-settings-status');
+            if (box) {
+                box.className = 'ai-status-container testing';
+                box.innerHTML = '<i class="fa-solid fa-circle-info"></i> Click Save Settings to purge stored key';
+            }
+        });
+
+        document.getElementById('ai-key')?.addEventListener('input', event => {
+            if (event.target.value.trim()) event.target.dataset.clearApiKey = 'false';
+        });
+
+        // Eye toggle for AI Key
+        document.getElementById('btn-toggle-ai-key-mask')?.addEventListener('click', () => {
+            const keyInput = document.getElementById('ai-key');
+            const eyeBtn = document.getElementById('btn-toggle-ai-key-mask');
+            if (!keyInput || !eyeBtn) return;
+            if (keyInput.type === 'password') {
+                keyInput.type = 'text';
+                eyeBtn.innerHTML = '<i class="fa-solid fa-eye-slash"></i>';
+            } else {
+                keyInput.type = 'password';
+                eyeBtn.innerHTML = '<i class="fa-solid fa-eye"></i>';
+            }
+        });
+
+        // ChatGPT SSO Buttons
+        document.getElementById('ai-btn-chatgpt-signin')?.addEventListener('click', startChatGPTSignIn);
+        document.getElementById('ai-btn-chatgpt-signout')?.addEventListener('click', startChatGPTSignOut);
+
+        // Real-time executable path validation
+        document.getElementById('ai-exe-path')?.addEventListener('input', (e) => {
+            validateCliExePath(null, e.target.value);
+        });
+
+        // Browse button for CLI / Desktop application executable
+        const browseBtn = document.getElementById('ai-btn-browse-exe');
+        const fileInput = document.getElementById('ai-exe-file-input');
+        if (browseBtn && fileInput) {
+            browseBtn.addEventListener('click', () => {
+                fileInput.click();
+            });
+            fileInput.addEventListener('change', (e) => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+                const fullPath = file.path || file.name;
+                const exeInput = document.getElementById('ai-exe-path');
+                if (exeInput) {
+                    exeInput.value = fullPath;
+                    validateCliExePath(null, fullPath);
+                }
+                notify(`Selected executable: ${file.name}`);
+            });
+        }
+
+        hydrateSettingsForm();
+        updateStatusBadge();
+
+    }
+
+
+
+    function buildPanel() {
+
+        if (document.getElementById('mtip-ai-panel')) return;
+
+        const backdrop = el('div', { id: 'mtip-ai-backdrop', class: 'mtip-ai-backdrop' });
+
+        document.body.appendChild(backdrop);
+
+        backdrop.addEventListener('click', minimizePanel);
+
+
+
+        const panel = el('section', { id: 'mtip-ai-panel', class: 'mtip-ai-panel' });
+
+        panel.innerHTML = `
+
+            <div class="ai-panel-header">
+
+                <div>
+
+                    <h3><i class="fa-solid fa-wand-magic-sparkles"></i> MTIP AI</h3>
+
+                    <span id="ai-status">Disabled</span>
+
+                </div>
+
+                <div class="ai-panel-tools">
+
+                    <button type="button" id="ai-minimize" title="Minimize"><i class="fa-solid fa-window-minimize"></i></button>
+
+                    <button type="button" id="ai-close" title="Close"><i class="fa-solid fa-xmark"></i></button>
+
+                </div>
+
+            </div>
+
+            <div class="ai-panel-body">
+
+                <aside class="ai-workbench-rail dark-scroll">
+
+                    <div class="ai-quick-actions">
+
+                        <button type="button" id="ai-summary" class="btn-secondary"><i class="fa-solid fa-list-check"></i> Summarize Findings</button>
+
+                        <button type="button" id="ai-pivots" class="btn-secondary"><i class="fa-solid fa-route"></i> Recommend Pivots</button>
+
+                        <button type="button" id="ai-report" class="btn-secondary"><i class="fa-solid fa-file-lines"></i> Draft Report</button>
+
+                    </div>
+
+                    <div id="ai-case-panel" class="ai-case-panel"></div>
+
+                    <div class="ai-mode-row">
+
+                        <button type="button" class="galaxy-subtab active" data-ai-mode="assist">Assist</button>
+
+                        <button type="button" class="galaxy-subtab" data-ai-mode="agent">Agent</button>
+
+                    </div>
+
+                    <div id="ai-agent-controls" class="ai-agent-controls" style="display:none;">
+
+                        <div class="ai-agent-limits">
+
+                            <label>Max Lookups<input id="ai-agent-max-lookups" type="number" min="1" max="50" value="20"></label>
+
+                            <label>Max Depth<input id="ai-agent-max-depth" type="number" min="1" max="8" value="5"></label>
+
+                            <label>Pivots / Step<input id="ai-agent-max-pivots" type="number" min="1" max="5" value="3"></label>
+
+                            <label>Runtime Sec<input id="ai-agent-max-runtime" type="number" min="30" max="1800" value="600"></label>
+
+                        </div>
+
+                        <div class="ai-agent-buttons">
+
+                            <button type="button" id="ai-agent-start" class="btn-primary"><i class="fa-solid fa-play"></i> Start Agent Investigation</button>
+
+                            <button type="button" id="ai-agent-stop" class="btn-secondary" disabled><i class="fa-solid fa-stop"></i> Stop</button>
+
+                        </div>
+
+                        <div id="ai-agent-run-status" class="ai-agent-status">idle</div>
+
+                        <div id="ai-agent-trace" class="ai-agent-trace dark-scroll"></div>
+
+                    </div>
+
+                    <details id="ai-correlation-controls" class="ai-correlation-controls ai-toolbox">
+
+                        <summary><i class="fa-solid fa-code-compare"></i> Correlation</summary>
+
+                        <div class="ai-toolbox-body">
+
+                            <textarea id="ai-correlation-input" rows="3" placeholder="Paste another result, hash, domain, or campaign note..."></textarea>
+
+                            <button type="button" id="ai-correlation-run" class="btn-secondary"><i class="fa-solid fa-code-compare"></i> Compare Relationship</button>
+
+                            <div id="ai-correlation-result"></div>
+
+                        </div>
+
+                    </details>
+
+                    <details id="ai-attribution-controls" class="ai-correlation-controls ai-toolbox">
+
+                        <summary><i class="fa-solid fa-scale-balanced"></i> Attribution</summary>
+
+                        <div class="ai-toolbox-body">
+
+                            <textarea id="ai-attribution-candidates" rows="2" placeholder="Optional actor or cluster names, separated by comma or newline..."></textarea>
+
+                            <button type="button" id="ai-attribution-run" class="btn-secondary"><i class="fa-solid fa-scale-balanced"></i> Assess Evidence</button>
+
+                            <div id="ai-attribution-result"></div>
+
+                        </div>
+
+                    </details>
+
+                </aside>
+
+                <section class="ai-workbench-main">
+
+                    <div id="ai-chat-messages" class="ai-chat-messages dark-scroll"></div>
+
+                    <div id="ai-context-notice" class="ai-context-notice" style="display:none;"></div>
+
+                    <div class="ai-input-row">
+
+                        <textarea id="ai-input" rows="2" placeholder="Ask about the current findings..."></textarea>
+
+                        <button type="button" id="ai-send" class="btn-primary"><i class="fa-solid fa-paper-plane"></i></button>
+
+                    </div>
+
+                </section>
+
+            </div>
+
+        `;
+
+        document.body.appendChild(panel);
+
+        document.getElementById('ai-minimize')?.addEventListener('click', minimizePanel);
+
+        document.getElementById('ai-close')?.addEventListener('click', closePanel);
+
+        document.getElementById('ai-summary')?.addEventListener('click', () => askAI('summarize', 'Summarize the current AI-MTIP findings. Keep facts, inferences, and suggested gaps separate.'));
+
+        document.getElementById('ai-pivots')?.addEventListener('click', () => askAI('recommend_pivots', 'Recommend the best next pivots from the current AI-MTIP evidence. Give reasons and propose manual AI-MTIP actions only.'));
+
+        document.getElementById('ai-report')?.addEventListener('click', () => askAI('draft_report', 'Draft an analyst-ready intelligence report from the current AI-MTIP evidence. Keep claims, proof, caveats, and next steps separate.'));
+
+        renderCasePanel();
+
+        document.querySelectorAll('[data-ai-mode]').forEach(btn => btn.addEventListener('click', () => setMode(btn.dataset.aiMode)));
+
+        document.getElementById('ai-agent-start')?.addEventListener('click', () => startAgent());
+
+        document.getElementById('ai-agent-stop')?.addEventListener('click', stopAgent);
+
+        document.getElementById('ai-send')?.addEventListener('click', () => {
+
+            const input = document.getElementById('ai-input');
+
+            const text = input?.value || '';
+
+            if (input) input.value = '';
+
+            if (state.mode === 'agent') {
+
+                startAgent(text);
+
+            } else {
+
+                askAI('chat', text);
+
+            }
+
+        });
+
+        document.getElementById('ai-input')?.addEventListener('keydown', e => {
+
+            if (e.key === 'Enter' && !e.shiftKey) {
+
+                e.preventDefault();
+
+                document.getElementById('ai-send')?.click();
+
+            }
+
+        });
+
+        document.addEventListener('click', e => {
+
+            const btn = e.target.closest('.ai-run-action');
+
+            if (btn) runAction(btn.dataset.actionId, btn);
+
+            const correlationBtn = e.target.closest('#ai-correlation-run');
+
+            if (correlationBtn) {
+
+                e.preventDefault();
+
+                compareCorrelation();
+
+            }
+
+            const attributionBtn = e.target.closest('#ai-attribution-run');
+
+            if (attributionBtn) {
+
+                e.preventDefault();
+
+                assessAttribution();
+
+            }
+
+            const markBtn = e.target.closest('.ai-evidence-mark');
+
+            if (markBtn) markEvidence(markBtn.dataset.evidenceId, markBtn.dataset.mark, markBtn.dataset.evidenceScope || 'correlation');
+
+            const caseSync = e.target.closest('#ai-case-sync');
+
+            if (caseSync) {
+
+                e.preventDefault();
+
+                syncCase('Analyst synced current evidence.').catch(err => renderMessage('assistant', `Case sync failed: ${err.message}`));
+
+            }
+
+            const caseStep = e.target.closest('#ai-case-step');
+
+            if (caseStep) {
+
+                e.preventDefault();
+
+                planCaseStep().catch(err => renderMessage('assistant', `Case step failed: ${err.message}`));
+
+            }
+
+            const caseRunNext = e.target.closest('#ai-case-run-next');
+
+            if (caseRunNext) {
+
+                e.preventDefault();
+
+                caseRunNext.disabled = true;
+
+                runCaseNextSource()
+
+                    .catch(err => renderMessage('assistant', `Case source execution failed: ${err.message}`))
+
+                    .finally(() => { caseRunNext.disabled = false; });
+
+            }
+
+            const caseAssess = e.target.closest('#ai-case-assess');
+
+            if (caseAssess) {
+
+                e.preventDefault();
+
+                caseAssess.disabled = true;
+
+                generateCaseAssessment()
+
+                    .catch(err => renderMessage('assistant', `Case assessment failed: ${err.message}`))
+
+                    .finally(() => { caseAssess.disabled = false; });
+
+            }
+
+            const caseReport = e.target.closest('#ai-case-report');
+
+            if (caseReport) {
+
+                e.preventDefault();
+
+                draftCaseReport().catch(err => renderMessage('assistant', `Case report failed: ${err.message}`));
+
+            }
+
+            const caseExport = e.target.closest('#ai-case-export');
+
+            if (caseExport) {
+
+                e.preventDefault();
+
+                if (state.caseId) {
+
+                    window.open(`${API_BASE}/api/ai/case/${encodeURIComponent(state.caseId)}/export`, '_blank');
+
+                }
+
+            }
+
+            const caseWorkspaceExport = e.target.closest('#ai-case-export-workspace');
+
+            if (caseWorkspaceExport) {
+
+                if (!state.caseId) toast('Sync a case first.', 'error');
+
+                else {
+
+                    window.open(`${API_BASE}/api/ai/case/${encodeURIComponent(state.caseId)}/export-workspace`, '_blank');
+
+                    toast('MTIP AI workspace export started.', 'success');
+
+                }
+
+            }
+
+            const caseExportJson = e.target.closest('#ai-case-export-json');
+
+            if (caseExportJson) {
+
+                e.preventDefault();
+
+                if (state.caseId) {
+
+                    window.open(`${API_BASE}/api/ai/case/${encodeURIComponent(state.caseId)}/export-json`, '_blank');
+
+                }
+
+            }
+
+            const caseRelated = e.target.closest('#ai-case-load-related');
+
+            if (caseRelated) {
+
+                e.preventDefault();
+
+                loadRelatedCases().catch(err => renderMessage('assistant', `Failed to load related cases: ${err.message}`));
+
+            }
+
+        });
+
+        renderMessage('assistant', 'Open an AI-MTIP result and ask about the current findings. I will propose actions, but you approve every AI-MTIP search.');
+
+    }
+
+
+
+    function syncPanelState() {
+
+        document.body.classList.toggle('ai-panel-open', state.open && !state.minimized);
+
+        document.body.classList.toggle('ai-panel-minimized', state.open && state.minimized);
+
+    }
+
+
+
+    function closePanel() {
+
+        state.open = false;
+
+        state.minimized = false;
+
+        syncPanelState();
+
+    }
+
+
+
+    function minimizePanel() {
+
+        if (!state.open) return;
+
+        state.minimized = true;
+
+        syncPanelState();
+
+    }
+
+
+
+    function togglePanel() {
+
+        if (state.open && !state.minimized) {
+
+            closePanel();
+
+        } else {
+
+            openPanel();
+
+        }
+
+    }
+
+
+
+    function openPanel() {
+
+        state.open = true;
+
+        state.minimized = false;
+
+        syncPanelState();
+
+        updateContextNotice();
+
+        loadSettings();
+
+    }
+
+
+
+    function showReportViewerModal(caseId, htmlContent, filename, indicator) {
+
+        let viewer = document.getElementById('report-viewer-modal');
+
+        if (!viewer) {
+
+            viewer = el('div', { id: 'report-viewer-modal', class: 'report-viewer-overlay' });
+
+            document.body.appendChild(viewer);
+
+        }
+
+        viewer.style.display = 'flex';
+
+        viewer.innerHTML = `
+
+            <div class="report-viewer-header">
+                <div class="report-viewer-title">
+                    <i class="fa-solid fa-file-shield report-viewer-icon" aria-hidden="true"></i>
+                    <div class="report-viewer-heading">
+                        <h2>Threat Intelligence Report</h2>
+                        <code>${escapeHtml(indicator || caseId)}</code>
+                    </div>
+                </div>
+                <div class="report-viewer-actions">
+                    <button type="button" class="btn-secondary" id="report-modal-open-tab" title="Open in new tab" aria-label="Open report in new tab"><i class="fa-solid fa-up-right-from-square" aria-hidden="true"></i></button>
+                    <a class="btn-secondary" id="report-modal-download" href="#" download="${escapeHtml(filename || 'mtip_report.html')}"><i class="fa-solid fa-download" aria-hidden="true"></i> Download HTML</a>
+                    <button type="button" class="btn-secondary" id="report-modal-close" title="Close report" aria-label="Close report"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
+                </div>
+            </div>
+
+            <iframe class="report-viewer-frame" id="report-viewer-iframe" title="Threat intelligence report" sandbox="allow-same-origin allow-scripts allow-modals allow-downloads"></iframe>
+
+        `;
+
+
+
+        const iframe = document.getElementById('report-viewer-iframe');
+
+        if (iframe) {
+
+            iframe.srcdoc = htmlContent;
+
+        }
+
+
+
+        const blob = new Blob([htmlContent], { type: 'text/html' });
+
+        const blobUrl = URL.createObjectURL(blob);
+
+        const dlBtn = document.getElementById('report-modal-download');
+
+        if (dlBtn) dlBtn.href = blobUrl;
+
+
+
+        document.getElementById('report-modal-open-tab')?.addEventListener('click', () => {
+
+            window.open(`${API_BASE}/api/ai/case/${encodeURIComponent(caseId)}/report-html`, '_blank');
+
+        });
+
+
+
+        document.getElementById('report-modal-close')?.addEventListener('click', () => {
+
+            viewer.style.display = 'none';
+
+            URL.revokeObjectURL(blobUrl);
+
+        });
+
+    }
+
+
+
+    async function runAeadWorkflow(explicitTarget = null, explicitType = null) {
+        // Deprecated: AI Investigation feature merged into primary Threat Assessment workflow
+        return;
+    }
+
+
+
+    window.mtipAI = {
+
+        openPanel,
+
+        runAeadWorkflow,
+
+        showReportViewerModal,
+
+        summarize: () => {
+
+            openPanel();
+
+            return askAI('summarize', 'Summarize the current AI-MTIP findings. Keep facts, inferences, and suggested gaps separate.');
+
+        },
+
+        recommendPivots: () => {
+
+            openPanel();
+
+            return askAI('recommend_pivots', 'Recommend the best next pivots from the current AI-MTIP evidence. Give reasons and propose manual AI-MTIP actions only.');
+
+        },
+
+        draftReport: () => {
+
+            openPanel();
+
+            return askAI('draft_report', 'Draft an analyst-ready intelligence report from the current AI-MTIP evidence. Keep claims, proof, caveats, and next steps separate.');
+
+        },
+
+        startAgent: (goalText = '') => {
+
+            openPanel();
+
+            setMode('agent');
+
+            return startAgent(goalText);
+
+        },
+
+        focusAssist: () => {
+
+            openPanel();
+
+            setMode('assist');
+
+            setTimeout(() => document.getElementById('ai-input')?.focus(), 80);
+
+        },
+
+        focusCompare: () => {
+
+            openPanel();
+
+            const controls = document.getElementById('ai-correlation-controls');
+
+            if (controls && 'open' in controls) controls.open = true;
+
+            setTimeout(() => document.getElementById('ai-correlation-input')?.focus(), 80);
+
+        },
+
+        focusAttribution: () => {
+
+            openPanel();
+
+            const controls = document.getElementById('ai-attribution-controls');
+
+            if (controls && 'open' in controls) controls.open = true;
+
+            setTimeout(() => document.getElementById('ai-attribution-candidates')?.focus(), 80);
+
+        },
+
+        syncCase,
+
+        planCaseStep,
+
+        runCaseNextSource,
+
+        draftCaseReport,
+
+        reloadSettings: loadSettings,
+
+        saveSettings: saveSettings,
+
+        testConnection: testConnection,
+
+        isAvailable: () => Boolean(state.settings?.available),
+
+        ask: (text = '') => {
+
+            openPanel();
+
+            return askAI('chat', text || 'Analyze the current AI-MTIP findings.');
+
+        }
+
+    };
+
+
+
+    document.addEventListener('DOMContentLoaded', () => {
+
+        buildPanel();
+
+        injectSettings();
+
+        loadSettings();
+
+    });
+
+})();
+

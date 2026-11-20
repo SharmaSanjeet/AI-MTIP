@@ -1,0 +1,144 @@
+# ==========================================
+# Python & Virtual Environments
+# ==========================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+develop-eggs/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+venv/
+.venv/
+env/
+.env_venv/
+
+# ==========================================
+# Environment & Secrets
+# ==========================================
+.env
+.env.*
+!.env.example
+*.session
+*.session-journal
+
+# ==========================================
+# Databases
+# ==========================================
+*.sqlite3
+*.db
+*.db-shm
+*.db-wal
+backend/data/*.db
+backend/data/*.sqlite3
+
+# ==========================================
+# Downloaded Data & Generated State
+# ==========================================
+backend/data/pocindex/*
+!backend/data/pocindex/.gitkeep
+backend/data/misp/*
+!backend/data/misp/.gitkeep
+backend/data/.cti_extract_v*
+backend/data/temp/*
+!backend/data/temp/.gitkeep
+backend/data/reports/*
+!backend/data/reports/.gitkeep
+backend/data/agent_audit.jsonl
+backend/data/*.zip
+
+# YARA Rules (External/Downloaded)
+backend/data/yara-rules/elastic/
+backend/data/yara-rules/yara-forge/
+backend/data/yara-rules/yaraify/
+backend/data/yara-rules/malpedia/
+!backend/data/yara-rules/.gitkeep
+
+# SIGMA Rules (External/Downloaded from Upstream Repositories)
+backend/data/sigma-rules/sigma-hq/
+backend/data/sigma-rules/joe-security/
+backend/data/sigma-rules/mdecrevoisier/
+backend/data/sigma-rules/hayabusa/
+backend/data/sigma-rules/mbabinski/
+backend/data/sigma-rules/tsale/
+backend/data/sigma-rules/downloads/
+backend/data/sigma-rules/*.zip
+backend/data/sigma-rules/*.tmp
+!backend/data/sigma-rules/.gitkeep
+!backend/data/sigma-rules/custom/
+!backend/data/sigma-rules/custom/*
+
+# ==========================================
+# Binary Lab Data & Workspaces
+# ==========================================
+backend/data/binary_lab/jobs/*
+!backend/data/binary_lab/jobs/.gitkeep
+backend/data/binary_lab/output/*
+!backend/data/binary_lab/output/.gitkeep
+backend/data/binary_lab/uploads/*
+!backend/data/binary_lab/uploads/.gitkeep
+backend/data/binary_lab/temp/*
+!backend/data/binary_lab/temp/.gitkeep
+backend/data/binary_lab/settings.json
+
+# Disassembler & Decompiler Projects
+*.idb
+*.i64
+*.id0
+*.id1
+*.id2
+*.nam
+*.til
+*.gpr
+*.rep/
+
+# ==========================================
+# Astro Website
+# ==========================================
+website/node_modules/
+website/.astro/
+website/dist/
+
+# ==========================================
+# Temporary, Log & IDE Files
+# ==========================================
+*.tmp
+*.log
+release-work/
+.vscode/
+vibe_images/
+.upstream-mantis/
+capture*.js
+.idea/
+.codex-logs/
+*.swp
+*.swo
+
+# ==========================================
+# OS & Tests
+# ==========================================
+.DS_Store
+Thumbs.db
+/tests
+docs/kaspersky_tip_backlog.md
+*.yara
+/backend/tests
+/backend/data/sigma-rules
+backend/data/staging/README.txt
+/backend/data/malware_db/samples
+/backend/data/staging
+/backend/scripts
+/backend/data/yara-rules
+/backend/scripts

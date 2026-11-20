@@ -1,0 +1,63 @@
+{
+  "last_run_timestamp": 1795158825.8165612,
+  "last_run_iso": "2026-11-20T07:13:45.816561Z",
+  "next_scheduled_iso": "2026-11-27T07:13:45.816561Z",
+  "interval_days": 7,
+  "status": "completed",
+  "caller": "startup",
+  "duration_seconds": 452.96,
+  "last_result": {
+    "sigma_rules": {
+      "status": "success",
+      "details": {
+        "sigma-hq": {
+          "success": true,
+          "repo": "sigma-hq",
+          "imported": 3782,
+          "message": "Successfully synced 3,782 rules from SigmaHQ Official"
+        },
+        "hayabusa": {
+          "success": true,
+          "repo": "hayabusa",
+          "imported": 5020,
+          "message": "Successfully synced 5,020 rules from Hayabusa Rules"
+        },
+        "mdecrevoisier": {
+          "success": true,
+          "repo": "mdecrevoisier",
+          "imported": 353,
+          "message": "Successfully synced 353 rules from mdecrevoisier Rules"
+        },
+        "joe-security": {
+          "success": true,
+          "repo": "joe-security",
+          "imported": 119,
+          "message": "Successfully synced 119 rules from Joe Security Sigma"
+        },
+        "mbabinski": {
+          "success": true,
+          "repo": "mbabinski",
+          "imported": 225,
+          "message": "Successfully synced 225 rules from mbabinski Rules"
+        },
+        "tsale": {
+          "success": true,
+          "repo": "tsale",
+          "imported": 52,
+          "message": "Successfully synced 52 rules from tsale Detection Rules"
+        }
+      },
+      "total_indexed": 9569
+    },
+    "yara_rules": {
+      "status": "success",
+      "details": {
+        "yara-elastic": "downloaded",
+        "malpedia": "downloaded"
+      }
+    },
+    "poc_index": {
+      "status": "success"
+    }
+  }
+}

@@ -1,0 +1,517 @@
+/* ==========================================================================
+   AI-MTIP Authentication, User Pill & Team Management Styles
+   ========================================================================== */
+
+/* Top Navigation User Item (Collapsible Rail Compatible) */
+.top-nav-user-wrap {
+    display: none;
+    width: 100%;
+    margin-top: auto;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+.top-nav-user-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    min-height: 38px;
+    padding: 7px 10px;
+    border-radius: 8px;
+    background: rgba(56, 189, 248, 0.08);
+    border: 1px solid rgba(56, 189, 248, 0.22);
+    color: #38bdf8;
+    box-sizing: border-box;
+    overflow: hidden;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.top-nav-user-item:hover {
+    background: rgba(56, 189, 248, 0.14);
+    border-color: rgba(56, 189, 248, 0.35);
+}
+
+.top-nav-user-item .user-nav-icon {
+    width: 24px;
+    min-width: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1rem;
+    text-align: center;
+    flex-shrink: 0;
+    color: #38bdf8;
+}
+
+.top-nav-user-item .user-nav-details {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex: 1;
+    min-width: 0;
+    opacity: 1;
+    max-width: 150px;
+    transform: translateX(0);
+    transition: opacity 0.2s cubic-bezier(0.16, 1, 0.3, 1),
+                transform 0.2s cubic-bezier(0.16, 1, 0.3, 1),
+                max-width 0.28s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.user-nav-name {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: #f1f5f9;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.user-role-badge {
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    background: rgba(56, 189, 248, 0.2);
+    color: #7dd3fc;
+    padding: 1px 6px;
+    border-radius: 6px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    flex-shrink: 0;
+}
+
+.user-logout-btn {
+    background: none;
+    border: none;
+    color: #f87171;
+    cursor: pointer;
+    padding: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+    transition: background 0.18s ease, color 0.18s ease;
+    margin-left: auto;
+    flex-shrink: 0;
+}
+
+.user-logout-btn:hover {
+    background: rgba(248, 113, 113, 0.15);
+    color: #ef4444;
+}
+
+/* Collapsed rail (width 60px): center icon and hide labels cleanly */
+.top-nav:not(:hover):not(:focus-within) .top-nav-user-item {
+    justify-content: center;
+    padding-inline: 0;
+    gap: 0;
+    border-color: transparent;
+    background: transparent;
+}
+
+.top-nav:not(:hover):not(:focus-within) .top-nav-user-item:hover {
+    background: var(--bg-hover);
+}
+
+.top-nav:not(:hover):not(:focus-within) .user-nav-details,
+.top-nav:not(:hover):not(:focus-within) .user-logout-btn {
+    opacity: 0;
+    max-width: 0;
+    transform: translateX(-8px);
+    pointer-events: none;
+    margin: 0;
+    padding: 0;
+    display: none;
+}
+
+/* Login Modal / Overlay */
+.mtip-login-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background: #080c14;
+    z-index: 9999999;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 20px;
+    box-sizing: border-box;
+}
+
+/* Workstation Mode: Single analyst local machine - zero login required */
+body[data-mode="workstation"] #mtip-login-overlay,
+body.mtip-workstation-mode #mtip-login-overlay {
+    display: none !important;
+}
+
+/* Login wordmark uses the same font as the sidebar AI-MTIP logo (.main-title in styles.css). */
+.login-card .login-header h2 {
+    font-family: 'Michroma', var(--font-mono);
+}
+
+/* Match the sidebar menu font (--font-ui). Icons are excluded so Font Awesome still renders. */
+.login-card,
+.login-card h2,
+.login-card p,
+.login-card label,
+.login-card input,
+.login-card button {
+    font-family: var(--font-ui);
+}
+
+.login-card {
+    width: 100%;
+    max-width: 440px;
+    background: #101622;
+    border: 1px solid rgba(255, 204, 0, 0.25);
+    border-radius: 16px;
+    padding: 36px 32px;
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.8), 0 0 32px rgba(255, 204, 0, 0.08);
+    animation: loginFadeIn 0.3s ease-out;
+}
+
+@keyframes loginFadeIn {
+    from { opacity: 0; transform: translateY(-15px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.login-header {
+    text-align: center;
+    margin-bottom: 24px;
+}
+
+.login-logo {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    margin-bottom: 12px;
+}
+
+.login-mtip-logo {
+    width: 72px;
+    height: 72px;
+    object-fit: contain;
+    filter: drop-shadow(0 0 16px rgba(255, 204, 0, 0.45));
+}
+
+.login-header h2 {
+    margin: 8px 0 4px 0;
+    font-size: 1.7rem;
+    font-weight: 800;
+    letter-spacing: 2px;
+    color: #ffcc00;
+    text-shadow: 0 0 18px rgba(255, 204, 0, 0.35);
+}
+
+.login-subtitle {
+    margin: 0 0 12px 0;
+    font-size: 0.82rem;
+    color: #94a3b8;
+    line-height: 1.4;
+    font-weight: 500;
+}
+
+.login-badge-wrap {
+    display: flex;
+    justify-content: center;
+    margin-top: 6px;
+}
+
+.login-team-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #38bdf8;
+    background: rgba(56, 189, 248, 0.1);
+    border: 1px solid rgba(56, 189, 248, 0.25);
+    padding: 3px 10px;
+    border-radius: 12px;
+}
+
+.login-header p {
+    margin: 0;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+}
+
+.login-form {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.login-field label {
+    display: block;
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--text-color);
+    margin-bottom: 6px;
+}
+
+.login-field label i {
+    color: var(--accent);
+    margin-right: 4px;
+}
+
+.login-field input {
+    width: 100%;
+    padding: 10px 14px;
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 8px;
+    color: #fff;
+    font-size: 0.9rem;
+    outline: none;
+    transition: border-color 0.2s;
+}
+
+.login-field input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.2);
+}
+
+.login-btn {
+    width: 100%;
+    padding: 12px;
+    font-size: 0.95rem;
+    font-weight: 600;
+    margin-top: 8px;
+    border-radius: 8px;
+}
+
+.login-error {
+    background: rgba(239, 68, 68, 0.15);
+    border: 1px solid rgba(239, 68, 68, 0.4);
+    color: #f87171;
+    font-size: 0.85rem;
+    padding: 8px 12px;
+    border-radius: 6px;
+    text-align: center;
+}
+
+.login-footer {
+    text-align: center;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    margin-top: 6px;
+}
+
+.login-footer code {
+    color: var(--accent);
+    background: rgba(0, 0, 0, 0.3);
+    padding: 2px 6px;
+    border-radius: 4px;
+}
+
+/* User Management Box in Settings */
+.users-mgmt-box {
+    margin-top: 24px;
+    padding: 22px;
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 12px;
+}
+
+.users-mgmt-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 18px;
+}
+
+.users-mgmt-header h4 {
+    margin: 0 0 4px 0;
+    font-size: 1.15rem;
+    color: var(--text-color);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.users-mgmt-header h4 i {
+    color: var(--accent);
+}
+
+.users-mgmt-header p {
+    margin: 0;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+}
+
+.users-table-wrap {
+    overflow-x: auto;
+}
+
+.users-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+}
+
+.users-table th {
+    text-align: left;
+    padding: 10px 12px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    color: var(--text-muted);
+    font-weight: 600;
+}
+
+.users-table td {
+    padding: 10px 12px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+    color: var(--text-color);
+}
+
+.user-role-tag {
+    font-size: 0.72rem;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 10px;
+    text-transform: uppercase;
+}
+
+.user-role-tag.role-admin {
+    background: rgba(168, 85, 247, 0.15);
+    color: #c084fc;
+    border: 1px solid rgba(168, 85, 247, 0.3);
+}
+
+.user-role-tag.role-analyst {
+    background: rgba(56, 189, 248, 0.15);
+    color: #38bdf8;
+    border: 1px solid rgba(56, 189, 248, 0.3);
+}
+
+.user-status-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #4ade80;
+    margin-right: 4px;
+}
+
+/* User key notice banner in Settings API keys */
+.user-key-active-notice {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 16px;
+    background: rgba(56, 189, 248, 0.08);
+    border: 1px solid rgba(56, 189, 248, 0.25);
+    border-radius: 8px;
+    font-size: 0.85rem;
+    color: var(--text-color);
+    margin-bottom: 20px;
+}
+
+.user-key-active-notice i {
+    color: var(--accent);
+    font-size: 1rem;
+}
+
+/* User Management Inline Form */
+.user-form-card {
+    margin-bottom: 20px;
+    padding: 18px 20px;
+    background: rgba(13, 18, 28, 0.7);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 10px;
+}
+
+.user-form-title {
+    margin: 0 0 14px 0;
+    font-size: 0.92rem;
+    font-weight: 700;
+    color: var(--text-color, #f1f5f9);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.user-form-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 12px;
+}
+
+.user-form-col {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    flex: 1;
+    min-width: 160px;
+}
+
+.user-form-col-role {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    flex: 0 0 130px;
+    min-width: 120px;
+}
+
+.user-form-col-btn {
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    flex: 0 0 auto;
+}
+
+.user-form-col label,
+.user-form-col-role label {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--text-muted, #94a3b8);
+}
+
+.user-form-input,
+.user-form-select {
+    width: 100%;
+    height: 38px;
+    padding: 0 12px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    border-radius: 6px;
+    color: #fff;
+    font-size: 0.85rem;
+    box-sizing: border-box;
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.user-form-input:focus,
+.user-form-select:focus {
+    border-color: var(--accent, #f59e0b);
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.2);
+}
+
+.user-form-submit-btn {
+    height: 38px;
+    min-width: 120px;
+    padding: 0 18px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    font-size: 0.85rem;
+    font-weight: 700;
+    border-radius: 6px;
+    cursor: pointer;
+    box-sizing: border-box;
+    white-space: nowrap;
+}
+
+/* Non-admin / analyst users must not see the Users & Team navigation item */
+body.mtip-user-analyst #settings-nav-users,
+body:not(.mtip-user-admin) #settings-nav-users {
+    display: none !important;
+}

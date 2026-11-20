@@ -1,0 +1,134 @@
+---
+import { Boxes, ExternalLink, ScanSearch, Sparkles } from '@lucide/astro';
+
+type Status = 'yes' | 'partial' | 'no';
+type Project = {
+  name: string;
+  url: string;
+  focus: string;
+  ioc: Status;
+  knowledge: Status;
+  monitoring: Status;
+  malware: Status;
+  social: Status;
+  reporting: Status;
+};
+
+const projects: Project[] = [
+  { name: 'AI-MTIP', url: 'https://github.com/SharmaSanjeet/AI-MTIP', focus: 'Unified analyst workbench', ioc: 'yes', knowledge: 'yes', monitoring: 'yes', malware: 'yes', social: 'yes', reporting: 'yes' },
+  { name: 'IntelOwl', url: 'https://github.com/intelowlproject/IntelOwl', focus: 'IOC and file enrichment', ioc: 'yes', knowledge: 'partial', monitoring: 'partial', malware: 'yes', social: 'no', reporting: 'partial' },
+  { name: 'OpenCTI', url: 'https://github.com/OpenCTI-Platform/opencti', focus: 'STIX knowledge graph', ioc: 'partial', knowledge: 'yes', monitoring: 'partial', malware: 'no', social: 'partial', reporting: 'partial' },
+  { name: 'MISP', url: 'https://github.com/MISP/MISP', focus: 'Intelligence sharing', ioc: 'yes', knowledge: 'yes', monitoring: 'yes', malware: 'partial', social: 'partial', reporting: 'partial' },
+  { name: 'YETI', url: 'https://github.com/yeti-platform/yeti', focus: 'CTI and DFIR enrichment', ioc: 'yes', knowledge: 'yes', monitoring: 'partial', malware: 'partial', social: 'no', reporting: 'no' },
+  { name: 'SpiderFoot', url: 'https://github.com/smicallef/spiderfoot', focus: 'OSINT and attack-surface mapping', ioc: 'yes', knowledge: 'partial', monitoring: 'partial', malware: 'no', social: 'partial', reporting: 'no' },
+  { name: 'OpenOSINT', url: 'https://github.com/OpenOSINT/OpenOSINT', focus: 'AI-assisted passive OSINT', ioc: 'yes', knowledge: 'partial', monitoring: 'no', malware: 'no', social: 'partial', reporting: 'yes' },
+  { name: 'Watcher', url: 'https://github.com/thalesgroup-cert/Watcher', focus: 'AI-powered CTI monitoring', ioc: 'partial', knowledge: 'partial', monitoring: 'yes', malware: 'no', social: 'no', reporting: 'yes' },
+];
+
+const statusMeta = {
+  yes: { symbol: '✓', label: 'Built-in' },
+  partial: { symbol: '◐', label: 'Partial or integration' },
+  no: { symbol: '—', label: 'Not included' },
+} as const;
+
+const differentiators = [
+  { icon: Boxes, title: 'One investigation surface', text: 'AI-MTIP combines IOC enrichment, threat knowledge, daily intelligence, ransomware, vulnerability, X, and Telegram monitoring in one local workspace.' },
+  { icon: ScanSearch, title: 'Built-in analyst workbenches', text: 'YARA authoring and testing, sample similarity, and IDA or Ghidra-backed binary analysis are first-class workflows rather than external handoffs.' },
+  { icon: Sparkles, title: 'Evidence-aware reporting', text: 'MTIP AI works over collected evidence and supports daily briefs, investigation reports, and Binary Lab output in Markdown, HTML, PDF, and portable workspace bundles.' },
+];
+---
+
+<section class="section comparison-section" id="comparison">
+  <div class="container">
+    <span class="section-label">Open-source landscape</span>
+    <h2 class="section-title">How AI-MTIP Compares.</h2>
+    <p class="section-copy">Each project solves a valuable part of the threat-intelligence workflow. AI-MTIP is differentiated by bringing collection, investigation, malware workbenches, and evidence-aware reporting together in a single analyst-focused environment.</p>
+
+    <div class="legend" aria-label="Comparison legend">
+      <span><strong class="yes">✓</strong> Built-in</span>
+      <span><strong class="partial">◐</strong> Partial / integration</span>
+      <span><strong class="no">—</strong> Not included</span>
+    </div>
+
+    <div class="table-frame" tabindex="0" aria-label="Scrollable comparison of AI-MTIP and related open-source tools">
+      <table>
+        <thead>
+          <tr>
+            <th scope="col">Project</th>
+            <th scope="col">Primary focus</th>
+            <th scope="col">IOC &amp; OSINT enrichment</th>
+            <th scope="col">CTI knowledge</th>
+            <th scope="col">Continuous monitoring</th>
+            <th scope="col">YARA &amp; malware analysis</th>
+            <th scope="col">Social / Telegram</th>
+            <th scope="col">AI &amp; reporting</th>
+          </tr>
+        </thead>
+        <tbody>
+          {projects.map((project, index) => (
+            <tr class:list={{ featured: index === 0 }}>
+              <th scope="row">
+                <a href={project.url} target="_blank" rel="noreferrer">
+                  {project.name}<ExternalLink size={13} aria-hidden="true" />
+                </a>
+                {index === 0 && <span class="current-label">This project</span>}
+              </th>
+              <td class="focus-cell">{project.focus}</td>
+              {[project.ioc, project.knowledge, project.monitoring, project.malware, project.social, project.reporting].map((status) => (
+                <td><span class:list={['status', status]} title={statusMeta[status].label} aria-label={statusMeta[status].label}>{statusMeta[status].symbol}</span></td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+    <p class="method-note">Based on publicly documented open-source capabilities as of November 2026. Integrations and available features may change.</p>
+
+    <div class="difference-grid">
+      {differentiators.map(({ icon: Icon, title, text }) => (
+        <article>
+          <span><Icon size={19} stroke-width={1.7} /></span>
+          <h3>{title}</h3>
+          <p>{text}</p>
+        </article>
+      ))}
+    </div>
+  </div>
+</section>
+
+<style>
+  .comparison-section { background: #0c0c0c; }
+  .legend { display: flex; flex-wrap: wrap; gap: .75rem 1.4rem; margin-top: 2rem; color: #858585; font: .68rem/1.5 var(--font-mono); }
+  .legend span { display: inline-flex; align-items: center; gap: .45rem; }
+  .legend strong { width: 1.15rem; text-align: center; font-size: .85rem; }
+  .legend .yes { color: var(--yellow); }
+  .legend .partial { color: #aaa; }
+  .legend .no { color: #555; }
+  .table-frame { margin-top: 1.2rem; overflow-x: auto; border: 1px solid var(--border); border-radius: 1rem; background: #101010; scrollbar-width: thin; }
+  table { width: 100%; min-width: 1050px; border-collapse: collapse; font-size: .76rem; }
+  th, td { padding: 1rem .85rem; text-align: left; border-right: 1px solid #242424; border-bottom: 1px solid #242424; vertical-align: middle; }
+  th:last-child, td:last-child { border-right: 0; }
+  tbody tr:last-child th, tbody tr:last-child td { border-bottom: 0; }
+  thead th { color: #8e8e8e; background: #141414; font: 600 .62rem/1.45 var(--font-mono); letter-spacing: .045em; text-transform: uppercase; }
+  thead th:first-child, tbody th { position: sticky; left: 0; z-index: 2; }
+  thead th:first-child { z-index: 3; }
+  tbody th { min-width: 145px; background: #101010; }
+  tbody th a { display: inline-flex; align-items: center; gap: .35rem; color: #e8e8e8; font-size: .82rem; }
+  tbody th a:hover { color: var(--yellow); }
+  .featured th, .featured td { background: rgba(255,229,0,.045); }
+  .featured th { background: #1a190c; }
+  .featured th a { color: var(--yellow); font-family: var(--font-brand); font-size: .68rem; }
+  .current-label { display: block; width: max-content; margin-top: .4rem; padding: .24rem .38rem; color: #0a0a0a; background: var(--yellow); border-radius: .25rem; font: 700 .51rem/1 var(--font-mono); letter-spacing: .05em; text-transform: uppercase; }
+  .focus-cell { min-width: 165px; color: #9a9a9a; line-height: 1.45; }
+  .status { display: inline-grid; place-items: center; min-width: 1.2rem; font: 700 1rem/1 var(--font-mono); }
+  .status.yes { color: var(--yellow); }
+  .status.partial { color: #aaa; }
+  .status.no { color: #4f4f4f; }
+  .method-note { margin: .85rem 0 0; color: #666; font: .64rem/1.6 var(--font-mono); }
+  .difference-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: .8rem; margin-top: 3rem; }
+  .difference-grid article { padding: 1.4rem; background: linear-gradient(180deg, #171714, #111); border: 1px solid #302f20; border-radius: .85rem; }
+  .difference-grid article > span { display: grid; place-items: center; width: 40px; height: 40px; color: var(--yellow); background: rgba(255,229,0,.06); border: 1px solid rgba(255,229,0,.15); border-radius: .55rem; }
+  .difference-grid h3 { margin: 2rem 0 .65rem; font-size: 1rem; }
+  .difference-grid p { margin: 0; color: #888; font-size: .82rem; line-height: 1.7; }
+  @media (max-width: 780px) { .difference-grid { grid-template-columns: 1fr; } }
+</style>
